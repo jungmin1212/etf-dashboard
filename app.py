@@ -17,11 +17,11 @@ def load_data(file_name):
         return df
     return pd.DataFrame()
 
-st.title("  ETF 추적 대시보드")
-st.markdown("비트와이즈와 블랙록의 추정 평단가와 자금 흐름을 실시간으로 추적합니다." )
+st.title("📊 ETF 추적 대시보드")
+st.markdown("비트와이즈와 블랙록의 추정 평단가와 자금 흐름을 실시간으로 추적합니다.")
 
 # 탭을 나누어 BSOL과 IBIT를 깔끔하게 분리
-tab1, tab2 = st.tabs([" 솔라나 (BSOL)", " 비트코인 (IBIT)"])
+tab1, tab2 = st.tabs(["🟣 솔라나 (BSOL)", "🟠 비트코인 (IBIT)"])
 
 with tab1:
     st.header("BSOL (Bitwise Solana Staking ETF)")
@@ -43,15 +43,17 @@ with tab1:
         col3.metric("평단가 대비 괴리율", f"{gap_pct:.2f}%", f"{gap_pct:.2f}%") 
         col4.metric("오늘 순매수(SOL)", f"{latest['flow_sol_final']:,.2f}")
         
-        st.subheader(" 평단가 vs 현재가 추세")
+        st.subheader("📈 평단가 vs 현재가 추세")
         # 차트를 그리기 위해 필요한 열만 추출
         chart_data = df_bsol[['date', 'implied_sol_px', 'avg_buy_price_ex_staking']].set_index('date')
         chart_data.columns = ['시장가 (Market Price)', '기관 평단가 (Cost Basis)']
         st.line_chart(chart_data)
         
-        st.subheader(" 기관 자금 흐름 (Flow)")
-        flow_data = df_bsol[['date', 'flow_sol_final']].set_index('date')
-        st.bar_chart(flow_data)
+        st.subheader("📊 기관 자금 흐름 (Flow)")
+        # 양수/음수 색상 분리 적용
+        flow_data_bsol = df_bsol[['date', 'flow_sol_final']].copy()
+        flow_data_bsol['color'] = flow_data_bsol['flow_sol_final'].apply(lambda x: '#2ecc71' if x >= 0 else '#e74c3c')
+        st.bar_chart(flow_data_bsol, x='date', y='flow_sol_final', color='color')
     else:
         st.warning("BSOL 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
 
@@ -73,17 +75,15 @@ with tab2:
         col3.metric("평단가 대비 괴리율", f"{gap_pct:.2f}%", f"{gap_pct:.2f}%")
         col4.metric("오늘 순매수(BTC)", f"{latest['flow_btc_final']:,.2f}")
         
-        st.subheader(" 평단가 vs 현재가 추세")
+        st.subheader("📈 평단가 vs 현재가 추세")
         chart_data = df_ibit[['date', 'implied_btc_px', 'avg_buy_price_ex_fee']].set_index('date')
         chart_data.columns = ['시장가 (Market Price)', '기관 평단가 (Cost Basis)']
         st.line_chart(chart_data)
         
-        st.subheader(" 기관 자금 흐름 (Flow)")
-        flow_data = df_ibit[['date', 'flow_btc_final']].set_index('date')
-        st.bar_chart(flow_data)
+        st.subheader("📊 기관 자금 흐름 (Flow)")
+        # 양수/음수 색상 분리 적용
+        flow_data_ibit = df_ibit[['date', 'flow_btc_final']].copy()
+        flow_data_ibit['color'] = flow_data_ibit['flow_btc_final'].apply(lambda x: '#2ecc71' if x >= 0 else '#e74c3c')
+        st.bar_chart(flow_data_ibit, x='date', y='flow_btc_final', color='color')
     else:
-
         st.warning("IBIT 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
-
-
-
