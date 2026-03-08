@@ -3,7 +3,7 @@ import pandas as pd
 from pathlib import Path
 
 # 웹페이지 기본 설정 (제목, 레이아웃 넓게)
-st.set_page_config(page_title="나만의 ETF 퀀트 대시보드", layout="wide")
+st.set_page_config(page_title="BSOL-IBIT ETF 퀀트 대시보드", layout="wide")
 
 # 데이터 불러오기 함수 (캐싱을 통해 속도 향상)
 @st.cache_data(ttl=3600) # 1시간마다 데이터 새로고침
@@ -82,4 +82,5 @@ with tab2:
         flow_data = df_ibit[['date', 'flow_btc_final']].set_index('date')
         st.bar_chart(flow_data)
     else:
+
         st.warning("IBIT 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
