@@ -1,0 +1,35 @@
+name: Daily ETF Tracker Update
+
+on:
+  schedule:
+    # 한국 시간(KST) 오후 12시는 세계 표준시(UTC)로 오전 3시입니다.
+    - cron: '0 3 * * *'
+  workflow_dispatch: # 수동 실행 버튼
+
+jobs:
+  update-data:
+    runs-ok: ubuntu-latest
+    steps:
+      - name: 저장소 코드 불러오기
+        uses: actions/checkout@v3
+
+      - name: 파이썬 환경 설정
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: 필요 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 데이터 수집 엔진 가동 (BSOL & IBIT)
+        run: |
+          python bsol.py
+          python ibit.py
+
+      - name: 업데이트된 데이터를 저장소에 반영
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add */*.csv
+          git commit -m "🤖 오후 12시 정기 업데이트 완료" || echo "변경 사항 없음"
+          git push
