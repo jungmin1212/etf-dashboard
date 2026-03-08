@@ -22,10 +22,9 @@ def load_data(file_name: str) -> pd.DataFrame:
 @st.cache_data(ttl=60)
 def get_crypto_prices() -> dict:
     """
-    1순위: Yahoo Finance (yfinance)
+    1순위: Yahoo Finance
     2순위: CoinGecko (백업)
-    둘 다 실패 시: {"SOL": None, "BTC": None}  →  화면에 N/A 표시
-    CSV 값은 절대 사용하지 않음
+    둘 다 실패 시 None → 화면에 N/A 표시 (CSV 폴백 없음)
     """
     result = {"SOL": None, "BTC": None}
 
@@ -58,7 +57,7 @@ def get_crypto_prices() -> dict:
         except Exception:
             pass
 
-    return result  # None이면 화면에서 N/A 처리
+    return result
 
 
 PERIOD_DAYS = {"30일": 30, "90일": 90, "120일": 120, "1년": 365}
@@ -71,7 +70,7 @@ def bsol_live(df: pd.DataFrame) -> None:
     holdings = float(latest["sol_in_trust"])
     date_str = latest["date"].strftime("%m월 %d일")
 
-    sol_px = get_crypto_prices()["SOL"]   # None이면 N/A, CSV 폴백 없음
+    sol_px = get_crypto_prices()["SOL"]
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c2.metric("기관 순수 평단가",         f"${avg_cost:,.2f}")
@@ -88,7 +87,7 @@ def bsol_live(df: pd.DataFrame) -> None:
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="bsol_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
-    df_f   = df[df["date"] >= cutoff]
+    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)  # 인덱스 재정렬
 
     st.subheader("평단가 vs 현재가 추세")
     chart = df_f[["date", "implied_sol_px", "avg_buy_price_ex_staking"]].copy()
@@ -111,7 +110,7 @@ def ibit_live(df: pd.DataFrame) -> None:
     holdings = float(latest["btc_in_trust"])
     date_str = latest["date"].strftime("%m월 %d일")
 
-    btc_px = get_crypto_prices()["BTC"]   # None이면 N/A, CSV 폴백 없음
+    btc_px = get_crypto_prices()["BTC"]
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c2.metric("기관 순수 평단가",         f"${avg_cost:,.2f}")
@@ -128,7 +127,7 @@ def ibit_live(df: pd.DataFrame) -> None:
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="ibit_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
-    df_f   = df[df["date"] >= cutoff]
+    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)  # 인덱스 재정렬
 
     st.subheader("평단가 vs 현재가 추세")
     chart = df_f[["date", "implied_btc_px", "avg_buy_price_ex_fee"]].copy()
