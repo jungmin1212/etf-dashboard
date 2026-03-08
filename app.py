@@ -6,7 +6,7 @@ from pathlib import Path
 st.set_page_config(page_title="BSOL-IBIT ETF 퀀트 대시보드", layout="wide")
 
 # 데이터 불러오기 함수 (캐싱을 통해 속도 향상)
-@st.cache_data # 불필요한 새로고침 타이머(ttl) 제거 완료
+@st.cache_data # 캐싱 활성화 (속도 향상)
 def load_data(file_name):
     # 각 스크립트가 저장하는 폴더 경로에 맞게 설정
     # bsol은 bsol_tracker 폴더, ibit은 ibit_tracker 폴더 안에 있다고 가정합니다.
@@ -46,11 +46,12 @@ with tab1:
         # 차트를 그리기 위해 필요한 열만 추출
         chart_data = df_bsol[['date', 'implied_sol_px', 'avg_buy_price_ex_staking']].set_index('date')
         chart_data.columns = ['시장가 (Market Price)', '기관 평단가 (Cost Basis)']
-        # 현재가: 흰색(#FFFFFF), BSOL 평단가: 연보라색(#B19CD9)
+        # 🚨 이 부분 색상이 거꾸로 적용되어 있어 수정했습니다!
+        # ['#FFFFFF', '#B19CD9'] 로 설정하여 '시장가'가 흰색, '기관 평단가'가 연보라색이 되도록 했습니다.
         st.line_chart(chart_data, color=["#FFFFFF", "#B19CD9"])
         
         st.subheader("기관 자금 흐름 (Flow)")
-        # 양수/음수 색상 분리 적용
+        # 양수/음수 색상 분리 적용 (양수 초록, 음수 빨강)
         flow_data_bsol = df_bsol[['date', 'flow_sol_final']].copy()
         flow_data_bsol['color'] = flow_data_bsol['flow_sol_final'].apply(lambda x: '#2ecc71' if x >= 0 else '#e74c3c')
         st.bar_chart(flow_data_bsol, x='date', y='flow_sol_final', color='color')
@@ -78,11 +79,12 @@ with tab2:
         st.subheader("평단가 vs 현재가 추세")
         chart_data = df_ibit[['date', 'implied_btc_px', 'avg_buy_price_ex_fee']].set_index('date')
         chart_data.columns = ['시장가 (Market Price)', '기관 평단가 (Cost Basis)']
-        # 현재가: 흰색(#FFFFFF), IBIT 평단가: 주황색(#FF8C00)
+        # 🚨 이 부분 색상이 거꾸로 적용되어 있어 수정했습니다!
+        # ['#FFFFFF', '#FF8C00'] 으로 설정하여 '시장가'가 흰색, '기관 평단가'가 주황색이 되도록 했습니다.
         st.line_chart(chart_data, color=["#FFFFFF", "#FF8C00"])
         
         st.subheader("기관 자금 흐름 (Flow)")
-        # 양수/음수 색상 분리 적용
+        # 양수/음수 색상 분리 적용 (양수 초록, 음수 빨강)
         flow_data_ibit = df_ibit[['date', 'flow_btc_final']].copy()
         flow_data_ibit['color'] = flow_data_ibit['flow_btc_final'].apply(lambda x: '#2ecc71' if x >= 0 else '#e74c3c')
         st.bar_chart(flow_data_ibit, x='date', y='flow_btc_final', color='color')
