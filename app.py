@@ -17,7 +17,9 @@ def load_data(file_name):
     return pd.DataFrame()
 
 st.title("ETF 추적 대시보드")
-st.markdown("비트와이즈와 블랙록의 추정 평단가와 자금 흐름을 실시간으로 추적합니다.")
+st.markdown("비트와이즈와 블랙록의 추정 평단가와 자금 흐름을 추적합니다.")
+# 🚨 [추가된 부분] 업데이트 시간 안내 문구를 눈에 잘 띄게 배치했습니다.
+st.info(" 데이터는 매일 한국 시간 오후 12시 자동으로 최신화됩니다.")
 
 # 탭을 나누어 BSOL과 IBIT를 깔끔하게 분리
 tab1, tab2 = st.tabs(["솔라나 (BSOL)", "비트코인 (IBIT)"])
@@ -29,7 +31,7 @@ with tab1:
     if not df_bsol.empty:
         latest = df_bsol.iloc[-1]
         
-        # 🚨 [추가된 부분] '오늘' 대신 데이터의 마지막 날짜를 'M월 D일' 형식으로 추출합니다.
+        # 데이터의 마지막 날짜를 'M월 D일' 형식으로 추출합니다.
         latest_date_str = latest['date'].strftime('%m월 %d일')
         
         # 최신 데이터 요약 지표 (Metrics)
@@ -42,8 +44,6 @@ with tab1:
         col1.metric("현재 추정 시장가", f"${px:,.2f}")
         col2.metric("기관 순수 평단가", f"${avg_cost:,.2f}")
         col3.metric("평단가 대비 괴리율", f"{gap_pct:.2f}%", f"{gap_pct:.2f}%") 
-        
-        # 🚨 [수정된 부분] '오늘 순매수' -> 'O월 O일 순매수' 로 변경
         col4.metric(f"{latest_date_str} 순매수(SOL)", f"{latest['flow_sol_final']:,.2f}")
         
         st.subheader("평단가 vs 현재가 추세")
@@ -67,7 +67,7 @@ with tab2:
     if not df_ibit.empty:
         latest = df_ibit.iloc[-1]
         
-        # 🚨 [추가된 부분] 데이터의 마지막 날짜를 'M월 D일' 형식으로 추출합니다.
+        # 데이터의 마지막 날짜를 'M월 D일' 형식으로 추출합니다.
         latest_date_str = latest['date'].strftime('%m월 %d일')
         
         col1, col2, col3, col4 = st.columns(4)
@@ -79,8 +79,6 @@ with tab2:
         col1.metric("현재 추정 시장가", f"${px:,.2f}")
         col2.metric("기관 순수 평단가", f"${avg_cost:,.2f}")
         col3.metric("평단가 대비 괴리율", f"{gap_pct:.2f}%", f"{gap_pct:.2f}%")
-        
-        # 🚨 [수정된 부분] '오늘 순매수' -> 'O월 O일 순매수' 로 변경
         col4.metric(f"{latest_date_str} 순매수(BTC)", f"{latest['flow_btc_final']:,.2f}")
         
         st.subheader("평단가 vs 현재가 추세")
