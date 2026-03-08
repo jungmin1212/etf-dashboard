@@ -59,7 +59,7 @@ def bsol_live(df: pd.DataFrame) -> None:
     chart.loc[chart.index[-1], "implied_sol_px"] = px
     chart = chart.set_index("date")
     chart.columns = ["시장가 (Market Price)", "기관 평단가 (Cost Basis)"]
-    st.line_chart(chart, color=["#FFFFFF", "#B19CD9"])
+    st.line_chart(chart, color=["#FFFFFF", "#FFD700"])
 
 
 @st.fragment(run_every=10)
@@ -120,4 +120,5 @@ with tab2:
         st.bar_chart(flow, x="date", y="flow_btc_final", color="color")
     else:
         st.warning("IBIT 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
+
 
