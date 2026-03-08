@@ -1,5 +1,6 @@
 import math
 
+import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
@@ -21,14 +22,8 @@ def load_data(file_name: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=60)
 def get_crypto_prices() -> dict:
-    """
-    1순위: Yahoo Finance
-    2순위: CoinGecko (백업)
-    둘 다 실패 시 None → 화면에 N/A 표시 (CSV 폴백 없음)
-    """
     result = {"SOL": None, "BTC": None}
 
-    # ── 1순위: Yahoo Finance ──────────────────────────────
     try:
         sol = yf.Ticker("SOL-USD").fast_info.last_price
         btc = yf.Ticker("BTC-USD").fast_info.last_price
@@ -39,7 +34,6 @@ def get_crypto_prices() -> dict:
     except Exception:
         pass
 
-    # ── 2순위: CoinGecko (못 가져온 것만 보완) ────────────
     if result["SOL"] is None or result["BTC"] is None:
         try:
             resp = requests.get(
@@ -58,6 +52,24 @@ def get_crypto_prices() -> dict:
             pass
 
     return result
+
+
+def flow_chart(df_f: pd.DataFrame, col: str) -> alt.Chart:
+    """양수=초록, 음수=빨강 — 값 자체로 판단하므로 인덱스 무관"""
+    return (
+        alt.Chart(df_f)
+        .mark_bar()
+        .encode(
+            x=alt.X("date:T", title=None),
+            y=alt.Y(f"{col}:Q", title=col),
+            color=alt.condition(
+                alt.datum[col] >= 0,
+                alt.value("#2ecc71"),   # 양수 → 초록
+                alt.value("#e74c3c"),   # 음수 → 빨강
+            ),
+        )
+        .properties(height=300)
+    )
 
 
 PERIOD_DAYS = {"30일": 30, "90일": 90, "120일": 120, "1년": 365}
@@ -87,7 +99,7 @@ def bsol_live(df: pd.DataFrame) -> None:
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="bsol_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
-    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)  # 인덱스 재정렬
+    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)
 
     st.subheader("평단가 vs 현재가 추세")
     chart = df_f[["date", "implied_sol_px", "avg_buy_price_ex_staking"]].copy()
@@ -98,9 +110,7 @@ def bsol_live(df: pd.DataFrame) -> None:
     st.line_chart(chart, color=["#FFFFFF", "#FFD700"])
 
     st.subheader("기관 자금 흐름 (Flow)")
-    flow = df_f[["date", "flow_sol_final"]].copy()
-    flow["color"] = flow["flow_sol_final"].apply(lambda x: "#2ecc71" if x >= 0 else "#e74c3c")
-    st.bar_chart(flow, x="date", y="flow_sol_final", color="color")
+    st.altair_chart(flow_chart(df_f, "flow_sol_final"), use_container_width=True)
 
 
 @st.fragment(run_every=60)
@@ -127,7 +137,7 @@ def ibit_live(df: pd.DataFrame) -> None:
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="ibit_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
-    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)  # 인덱스 재정렬
+    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)
 
     st.subheader("평단가 vs 현재가 추세")
     chart = df_f[["date", "implied_btc_px", "avg_buy_price_ex_fee"]].copy()
@@ -138,9 +148,7 @@ def ibit_live(df: pd.DataFrame) -> None:
     st.line_chart(chart, color=["#FFFFFF", "#FF8C00"])
 
     st.subheader("기관 자금 흐름 (Flow)")
-    flow = df_f[["date", "flow_btc_final"]].copy()
-    flow["color"] = flow["flow_btc_final"].apply(lambda x: "#2ecc71" if x >= 0 else "#e74c3c")
-    st.bar_chart(flow, x="date", y="flow_btc_final", color="color")
+    st.altair_chart(flow_chart(df_f, "flow_btc_final"), use_container_width=True)
 
 
 # ── 메인 레이아웃 ─────────────────────────────────────────────
