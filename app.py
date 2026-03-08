@@ -18,7 +18,7 @@ def load_data(file_name):
     return pd.DataFrame()
 
 st.title("  ETF 추적 대시보드")
-st.markdown("비트와이즈와 블랙록의 추정 평단가와 자금 흐름을 실시간으로 추적합니다." 업데이트 매일 오후 12시)
+st.markdown("비트와이즈와 블랙록의 추정 평단가와 자금 흐름을 실시간으로 추적합니다." )
 
 # 탭을 나누어 BSOL과 IBIT를 깔끔하게 분리
 tab1, tab2 = st.tabs([" 솔라나 (BSOL)", " 비트코인 (IBIT)"])
@@ -84,5 +84,6 @@ with tab2:
     else:
 
         st.warning("IBIT 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
+
 
 
