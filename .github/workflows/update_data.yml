@@ -2,13 +2,13 @@ name: Daily ETF Tracker Update
 
 on:
   schedule:
-    # 한국 시간(KST) 오후 12시는 세계 표준시(UTC)로 오전 3시입니다.
+    # 한국 시간(KST) 오후 12시(정오)는 세계 표준시(UTC)로 오전 3시입니다.
     - cron: '0 3 * * *'
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch: # 수동 실행 버튼 생성
 
 jobs:
   update-data:
-    # 🚨 이 부분이 'runs-ok'에서 'runs-on'으로 수정되었습니다!
+    # 🚨 'runs-ok'를 'runs-on'으로 수정했습니다!
     runs-on: ubuntu-latest
     steps:
       - name: 저장소 코드 불러오기
@@ -32,5 +32,5 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add */*.csv
-          git commit -m "🤖 오후 12시 정기 업데이트 완료" || echo "변경 사항 없음"
+          git commit -m "🤖 정기 업데이트 완료" || echo "변경 사항 없음"
           git push
