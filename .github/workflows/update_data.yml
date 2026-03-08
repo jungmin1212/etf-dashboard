@@ -8,7 +8,7 @@ on:
 
 jobs:
   update-data:
-    # 🚨 'runs-ok'를 'runs-on'으로 수정했습니다!
+    # 🚨 여기가 반드시 'runs-on' 이어야 합니다! (ok 아닙니다 ㅠㅠ)
     runs-on: ubuntu-latest
     steps:
       - name: 저장소 코드 불러오기
