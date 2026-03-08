@@ -177,7 +177,7 @@ def etha_live(df: pd.DataFrame) -> None:
     st.subheader("평단가 vs 현재가 추세")
     chart_data = df_f[["date", "implied_eth_px", "avg_buy_price_ex_fee"]].set_index("date")
     chart_data.columns = ["시장가 (Market Price)", "기관 평단가 (Cost Basis)"]
-    st.line_chart(chart_data, color=["#FFFFFF", "#627EEA"])
+    st.line_chart(chart_data, color=["#FFFFFF", "#FFD700"])
 
     st.subheader("기관 자금 흐름 (ETH)")
     st.altair_chart(flow_chart(df_f, "flow_eth_final"), use_container_width=True)
@@ -235,3 +235,4 @@ with tab_bsol:
         bsol_live(df_bsol)
     else:
         st.warning("BSOL 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
+
