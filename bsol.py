@@ -453,4 +453,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    input("\n[Enter 키를 눌러 종료합니다]")
