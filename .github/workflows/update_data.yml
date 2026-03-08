@@ -2,13 +2,11 @@ name: Daily ETF Tracker Update
 
 on:
   schedule:
-    # 한국 시간(KST) 오후 12시(정오)는 세계 표준시(UTC)로 오전 3시입니다.
     - cron: '0 3 * * *'
-  workflow_dispatch: # 수동 실행 버튼 생성
+  workflow_dispatch:
 
 jobs:
   update-data:
-    # 🚨 여기가 반드시 'runs-on' 이어야 합니다! (ok 아닙니다 ㅠㅠ)
     runs-on: ubuntu-latest
     steps:
       - name: 저장소 코드 불러오기
