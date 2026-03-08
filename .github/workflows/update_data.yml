@@ -1,34 +1,36 @@
-name: Daily ETF Tracker Update
+name: ETF 데이터 자동 업데이트
 
 on:
   schedule:
-    - cron: '0 3 * * *'
-  workflow_dispatch:
+    - cron: '0 3 * * *'   # 매일 03:00 UTC = 한국시간 오후 12시
+  workflow_dispatch:        # 수동 실행 버튼
 
 jobs:
   update-data:
     runs-on: ubuntu-latest
+
     steps:
-      - name: 저장소 코드 불러오기
-        uses: actions/checkout@v3
+      - name: 레포 체크아웃
+        uses: actions/checkout@v4
 
-      - name: 파이썬 환경 설정
-        uses: actions/setup-python@v4
+      - name: Python 설정
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
 
-      - name: 필요 패키지 설치
-        run: pip install -r requirements.txt
+      - name: 패키지 설치
+        run: pip install requests pandas beautifulsoup4 openpyxl lxml yfinance
 
-      - name: 데이터 수집 엔진 가동 (BSOL & IBIT)
+      - name: 데이터 수집 엔진 가동 (BSOL, IBIT, ETHA)
         run: |
           python bsol.py
           python ibit.py
+          python etha.py
 
-      - name: 업데이트된 데이터를 저장소에 반영
+      - name: CSV 커밋 & 푸시
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add */*.csv
-          git commit -m "🤖 정기 업데이트 완료" || echo "변경 사항 없음"
+          git diff --cached --quiet || git commit -m "자동 업데이트: $(date -u '+%Y-%m-%d')"
           git push
