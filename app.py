@@ -89,15 +89,27 @@ def ibit_live(df: pd.DataFrame) -> None:
 
 
 st.title("ETF 추적 대시보드")
-st.markdown("비트와이즈와 블랙록의 추정 평단가와 자금 흐름을 추적합니다.")
+st.markdown("블랙록과 비트와이즈 추정 평단가와 자금 흐름을 추적합니다.")
 
 ic1, ic2 = st.columns(2)
 ic1.info("📅 기관 데이터(평단가 · 보유량 · 자금흐름): 매일 오후 12시(KST) 자동 최신화")
 ic2.success("⚡ 현재 시장가: CoinGecko 실시간 조회 · 10초마다 자동 갱신")
 
-tab1, tab2 = st.tabs(["솔라나 (BSOL)", "비트코인 (IBIT)"])
+tab1, tab2 = st.tabs(["비트코인 (IBIT)", "솔라나 (BSOL)"])
 
-with tab1:
+with tab1:   
+    st.header("IBIT (iShares Bitcoin Trust)")
+    df_ibit = load_data("ibit_tracker/ibit_cost_basis_track.csv")
+    if not df_ibit.empty:
+        ibit_live(df_ibit)
+        st.subheader("기관 자금 흐름 (Flow)")
+        flow = df_ibit[["date", "flow_btc_final"]].copy()
+        flow["color"] = flow["flow_btc_final"].apply(lambda x: "#2ecc71" if x >= 0 else "#e74c3c")
+        st.bar_chart(flow, x="date", y="flow_btc_final", color="color")
+    else:
+        st.warning("IBIT 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
+
+with tab2:
     st.header("BSOL (Bitwise Solana Staking ETF)")
     df_bsol = load_data("bsol_tracker/bsol_cost_basis_track.csv")
     if not df_bsol.empty:
@@ -109,16 +121,5 @@ with tab1:
     else:
         st.warning("BSOL 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
 
-with tab2:
-    st.header("IBIT (iShares Bitcoin Trust)")
-    df_ibit = load_data("ibit_tracker/ibit_cost_basis_track.csv")
-    if not df_ibit.empty:
-        ibit_live(df_ibit)
-        st.subheader("기관 자금 흐름 (Flow)")
-        flow = df_ibit[["date", "flow_btc_final"]].copy()
-        flow["color"] = flow["flow_btc_final"].apply(lambda x: "#2ecc71" if x >= 0 else "#e74c3c")
-        st.bar_chart(flow, x="date", y="flow_btc_final", color="color")
-    else:
-        st.warning("IBIT 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
 
 
