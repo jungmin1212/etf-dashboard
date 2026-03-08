@@ -1,216 +1,142 @@
-import math
-
-import altair as alt
-import pandas as pd
-import requests
 import streamlit as st
+import pandas as pd
+import altair as alt
 import yfinance as yf
 from pathlib import Path
 
-st.set_page_config(page_title="BSOL-IBIT-ETHA ETF 퀀트 대시보드", layout="wide")
+# ── 페이지 설정 ────────────────────────────────────────────────
+st.set_page_config(page_title="크립토 ETF 퀀트 대시보드", layout="wide")
 
+PERIOD_DAYS = {"30일": 30, "90일": 90, "120일": 120, "1년": 365}
 
+# ── 모바일 반응형 CSS ──────────────────────────────────────────
+st.markdown("""
+<style>
+@media (max-width: 768px) {
+    /* 5열 메트릭 → 2열로 줄바꿈 */
+    [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+    }
+    [data-testid="column"] {
+        min-width: 47% !important;
+        flex: 1 1 47% !important;
+    }
+    /* 라디오 버튼 세로로 */
+    [data-testid="stRadio"] > div {
+        flex-direction: column !important;
+    }
+    /* 폰트 크기 조금 줄이기 */
+    [data-testid="metric-container"] {
+        font-size: 0.85em;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ── 데이터 로딩 ────────────────────────────────────────────────
 @st.cache_data(ttl=600)
 def load_data(file_name: str) -> pd.DataFrame:
-    file_path = Path(file_name)
-    if file_path.exists():
-        df = pd.read_csv(file_path)
+    fp = Path(file_name)
+    if fp.exists():
+        df = pd.read_csv(fp)
         df["date"] = pd.to_datetime(df["date"])
         return df
     return pd.DataFrame()
 
-
 @st.cache_data(ttl=60)
 def get_crypto_prices() -> dict:
-    """
-    1순위: Yahoo Finance  /  2순위: CoinGecko (백업)
-    둘 다 실패 시 None → 화면에 N/A  (CSV 폴백 없음)
-    """
-    result = {"SOL": None, "BTC": None, "ETH": None}
-
-    # ── 1순위: Yahoo Finance ──────────────────────────────
+    prices = {"SOL": None, "BTC": None, "ETH": None}
     try:
-        sol = yf.Ticker("SOL-USD").fast_info.last_price
-        btc = yf.Ticker("BTC-USD").fast_info.last_price
-        eth = yf.Ticker("ETH-USD").fast_info.last_price
-        if sol and not math.isnan(float(sol)):
-            result["SOL"] = float(sol)
-        if btc and not math.isnan(float(btc)):
-            result["BTC"] = float(btc)
-        if eth and not math.isnan(float(eth)):
-            result["ETH"] = float(eth)
+        prices["SOL"] = yf.Ticker("SOL-USD").fast_info.last_price
+        prices["BTC"] = yf.Ticker("BTC-USD").fast_info.last_price
+        prices["ETH"] = yf.Ticker("ETH-USD").fast_info.last_price
+        if all(v is not None for v in prices.values()):
+            return prices
     except Exception:
         pass
+    # 백업: CoinGecko
+    try:
+        import requests
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": "solana,bitcoin,ethereum", "vs_currencies": "usd"},
+            timeout=10,
+        )
+        data = r.json()
+        prices["SOL"] = data.get("solana",   {}).get("usd")
+        prices["BTC"] = data.get("bitcoin",  {}).get("usd")
+        prices["ETH"] = data.get("ethereum", {}).get("usd")
+    except Exception:
+        pass
+    return prices
 
-    # ── 2순위: CoinGecko (못 가져온 것만 보완) ────────────
-    if any(v is None for v in result.values()):
-        try:
-            resp = requests.get(
-                "https://api.coingecko.com/api/v3/simple/price",
-                params={"ids": "solana,bitcoin,ethereum", "vs_currencies": "usd"},
-                headers={"accept": "application/json"},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if result["SOL"] is None:
-                result["SOL"] = float(data["solana"]["usd"])
-            if result["BTC"] is None:
-                result["BTC"] = float(data["bitcoin"]["usd"])
-            if result["ETH"] is None:
-                result["ETH"] = float(data["ethereum"]["usd"])
-        except Exception:
-            pass
-
-    return result
-
-
-def flow_chart(df_f: pd.DataFrame, col: str) -> alt.Chart:
-    """양수=초록, 음수=빨강 — 값 자체로 판단하므로 인덱스 무관"""
-    return (
-        alt.Chart(df_f)
+# ── Altair 자금 흐름 차트 ──────────────────────────────────────
+def flow_chart(df: pd.DataFrame, col: str, color_pos="#2ecc71", color_neg="#e74c3c"):
+    chart = (
+        alt.Chart(df)
         .mark_bar()
         .encode(
-            x=alt.X("date:T", title=None),
-            y=alt.Y(f"{col}:Q", title=col),
+            x=alt.X("date:T", title="날짜"),
+            y=alt.Y(f"{col}:Q", title="자금 흐름"),
             color=alt.condition(
                 alt.datum[col] >= 0,
-                alt.value("#2ecc71"),
-                alt.value("#e74c3c"),
+                alt.value(color_pos),
+                alt.value(color_neg),
             ),
+            tooltip=["date:T", f"{col}:Q"],
         )
-        .properties(height=300)
     )
+    return chart
 
+# ── 헤더 ──────────────────────────────────────────────────────
+st.title("ETF 추적 대시보드")
+st.markdown("블랙록(IBIT·ETHA)과 비트와이즈(BSOL) 추정 평단가와 자금 흐름을 추적합니다.")
+col_info1, col_info2 = st.columns(2)
+col_info1.info("📊 기관 데이터(평단가·보유량·자금흐름): 매일 오후 12시(KST) 자동 최신화")
+col_info2.success("⚡ 현재 시장가: Yahoo Finance 실시간 조회 · 1분마다 자동 갱신")
 
-PERIOD_DAYS = {"30일": 30, "90일": 90, "120일": 120, "1년": 365}
+# ── 탭 ────────────────────────────────────────────────────────
+tab_ibit, tab_etha, tab_bsol = st.tabs(["비트코인 (IBIT)", "이더리움 (ETHA)", "솔라나 (BSOL)"])
 
-
-@st.fragment(run_every=60)
-def bsol_live(df: pd.DataFrame) -> None:
-    latest   = df.iloc[-1]
-    avg_cost = float(latest["avg_buy_price_ex_staking"])
-    holdings = float(latest["sol_in_trust"])
-    date_str = latest["date"].strftime("%m월 %d일")
-
-    sol_px = get_crypto_prices()["SOL"]
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c2.metric("기관 순수 평단가",         f"${avg_cost:,.2f}")
-    c4.metric(f"{date_str} 순매수(SOL)", f"{latest['flow_sol_final']:,.2f}")
-    c5.metric("추정 보유량 (SOL)",        f"{holdings:,.0f}")
-
-    if sol_px is not None:
-        gap_pct = (sol_px - avg_cost) / avg_cost * 100
-        c1.metric("현재 시장가 (실시간)", f"${sol_px:,.2f}")
-        c3.metric("평단가 대비 괴리율",   f"{gap_pct:.2f}%", f"{gap_pct:.2f}%")
-    else:
-        c1.metric("현재 시장가 (실시간)", "N/A")
-        c3.metric("평단가 대비 괴리율",   "N/A")
-
-    period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="bsol_period")
-    cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
-    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)
-
-    st.subheader("평단가 vs 현재가 추세")
-    chart = df_f[["date", "implied_sol_px", "avg_buy_price_ex_staking"]].copy()
-    if sol_px is not None:
-        chart.loc[chart.index[-1], "implied_sol_px"] = sol_px
-    chart = chart.set_index("date")
-    chart.columns = ["시장가 (Market Price)", "기관 평단가 (Cost Basis)"]
-    st.line_chart(chart, color=["#FFFFFF", "#FFD700"])
-
-    st.subheader("기관 자금 흐름 (Flow)")
-    st.altair_chart(flow_chart(df_f, "flow_sol_final"), use_container_width=True)
-
-
+# ══════════════════════════════════════════════════════════════
+# IBIT 탭
+# ══════════════════════════════════════════════════════════════
 @st.fragment(run_every=60)
 def ibit_live(df: pd.DataFrame) -> None:
-    latest   = df.iloc[-1]
+    btc_px = get_crypto_prices()["BTC"]
+    px_str = f"${btc_px:,.2f}" if btc_px else "N/A"
+
+    latest = df.iloc[-1]
     avg_cost = float(latest["avg_buy_price_ex_fee"])
-    holdings = float(latest["btc_in_trust"])
+    btc_held = float(latest.get("btc_in_trust", 0) or 0)
     date_str = latest["date"].strftime("%m월 %d일")
 
-    btc_px = get_crypto_prices()["BTC"]
+    if btc_px and avg_cost > 0:
+        gap_pct = (btc_px - avg_cost) / avg_cost * 100
+        gap_str = f"{gap_pct:+.2f}%"
+    else:
+        gap_str = "N/A"
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c2.metric("기관 순수 평단가",         f"${avg_cost:,.2f}")
-    c4.metric(f"{date_str} 순매수(BTC)", f"{latest['flow_btc_final']:,.4f}")
-    c5.metric("추정 보유량 (BTC)",        f"{holdings:,.2f}")
-
-    if btc_px is not None:
-        gap_pct = (btc_px - avg_cost) / avg_cost * 100
-        c1.metric("현재 시장가 (실시간)", f"${btc_px:,.2f}")
-        c3.metric("평단가 대비 괴리율",   f"{gap_pct:.2f}%", f"{gap_pct:.2f}%")
-    else:
-        c1.metric("현재 시장가 (실시간)", "N/A")
-        c3.metric("평단가 대비 괴리율",   "N/A")
+    c1.metric("현재 BTC 시장가",    px_str)
+    c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}")
+    c3.metric("평단가 대비 괴리율",  gap_str)
+    c4.metric(f"{date_str} 순매수", f"{float(latest['flow_btc_final']):,.4f} BTC")
+    c5.metric("추정 BTC 보유량",    f"{btc_held:,.2f} BTC")
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="ibit_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
     df_f   = df[df["date"] >= cutoff].reset_index(drop=True)
 
     st.subheader("평단가 vs 현재가 추세")
-    chart = df_f[["date", "implied_btc_px", "avg_buy_price_ex_fee"]].copy()
-    if btc_px is not None:
-        chart.loc[chart.index[-1], "implied_btc_px"] = btc_px
-    chart = chart.set_index("date")
-    chart.columns = ["시장가 (Market Price)", "기관 평단가 (Cost Basis)"]
-    st.line_chart(chart, color=["#FFFFFF", "#FF8C00"])
+    chart_data = df_f[["date", "implied_btc_px", "avg_buy_price_ex_fee"]].set_index("date")
+    chart_data.columns = ["시장가 (Market Price)", "기관 평단가 (Cost Basis)"]
+    st.line_chart(chart_data, color=["#FFFFFF", "#FF8C00"])
 
-    st.subheader("기관 자금 흐름 (Flow)")
+    st.subheader("기관 자금 흐름 (BTC)")
     st.altair_chart(flow_chart(df_f, "flow_btc_final"), use_container_width=True)
 
-
-@st.fragment(run_every=60)
-def etha_live(df: pd.DataFrame) -> None:
-    latest   = df.iloc[-1]
-    avg_cost = float(latest["avg_buy_price_ex_fee"])
-    holdings = float(latest["eth_in_trust"])
-    date_str = latest["date"].strftime("%m월 %d일")
-
-    eth_px = get_crypto_prices()["ETH"]
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c2.metric("기관 순수 평단가",         f"${avg_cost:,.2f}")
-    c4.metric(f"{date_str} 순매수(ETH)", f"{latest['flow_eth_final']:,.2f}")
-    c5.metric("추정 보유량 (ETH)",        f"{holdings:,.0f}")
-
-    if eth_px is not None:
-        gap_pct = (eth_px - avg_cost) / avg_cost * 100
-        c1.metric("현재 시장가 (실시간)", f"${eth_px:,.2f}")
-        c3.metric("평단가 대비 괴리율",   f"{gap_pct:.2f}%", f"{gap_pct:.2f}%")
-    else:
-        c1.metric("현재 시장가 (실시간)", "N/A")
-        c3.metric("평단가 대비 괴리율",   "N/A")
-
-    period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="etha_period")
-    cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
-    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)
-
-    st.subheader("평단가 vs 현재가 추세")
-    chart = df_f[["date", "implied_eth_px", "avg_buy_price_ex_fee"]].copy()
-    if eth_px is not None:
-        chart.loc[chart.index[-1], "implied_eth_px"] = eth_px
-    chart = chart.set_index("date")
-    chart.columns = ["시장가 (Market Price)", "기관 평단가 (Cost Basis)"]
-    st.line_chart(chart, color=["#FFFFFF", "#627EEA"])   # 이더리움 공식 색상
-
-    st.subheader("기관 자금 흐름 (Flow)")
-    st.altair_chart(flow_chart(df_f, "flow_eth_final"), use_container_width=True)
-
-
-# ── 메인 레이아웃 ─────────────────────────────────────────────
-st.title("ETF 추적 대시보드")
-st.markdown("블랙록(IBIT·ETHA)과 비트와이즈(BSOL) 추정 평단가와 자금 흐름을 추적합니다.")
-
-ic1, ic2 = st.columns(2)
-ic1.info("📅 기관 데이터(평단가 · 보유량 · 자금흐름): 매일 오후 12시(KST) 자동 최신화")
-ic2.success("⚡ 현재 시장가: Yahoo Finance 실시간 조회 · 1분마다 자동 갱신")
-
-tab1, tab2, tab3 = st.tabs(["비트코인 (IBIT)", "이더리움 (ETHA)", "솔라나 (BSOL)"])
-
-with tab1:
+with tab_ibit:
     st.header("IBIT (iShares Bitcoin Trust)")
     df_ibit = load_data("ibit_tracker/ibit_cost_basis_track.csv")
     if not df_ibit.empty:
@@ -218,7 +144,45 @@ with tab1:
     else:
         st.warning("IBIT 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
 
-with tab2:
+# ══════════════════════════════════════════════════════════════
+# ETHA 탭
+# ══════════════════════════════════════════════════════════════
+@st.fragment(run_every=60)
+def etha_live(df: pd.DataFrame) -> None:
+    eth_px = get_crypto_prices()["ETH"]
+    px_str = f"${eth_px:,.2f}" if eth_px else "N/A"
+
+    latest = df.iloc[-1]
+    avg_cost = float(latest["avg_buy_price_ex_fee"])
+    eth_held = float(latest.get("eth_in_trust", 0) or 0)
+    date_str = latest["date"].strftime("%m월 %d일")
+
+    if eth_px and avg_cost > 0:
+        gap_pct = (eth_px - avg_cost) / avg_cost * 100
+        gap_str = f"{gap_pct:+.2f}%"
+    else:
+        gap_str = "N/A"
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("현재 ETH 시장가",    px_str)
+    c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}")
+    c3.metric("평단가 대비 괴리율",  gap_str)
+    c4.metric(f"{date_str} 순매수", f"{float(latest['flow_eth_final']):,.4f} ETH")
+    c5.metric("추정 ETH 보유량",    f"{eth_held:,.2f} ETH")
+
+    period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="etha_period")
+    cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
+    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)
+
+    st.subheader("평단가 vs 현재가 추세")
+    chart_data = df_f[["date", "implied_eth_px", "avg_buy_price_ex_fee"]].set_index("date")
+    chart_data.columns = ["시장가 (Market Price)", "기관 평단가 (Cost Basis)"]
+    st.line_chart(chart_data, color=["#FFFFFF", "#627EEA"])
+
+    st.subheader("기관 자금 흐름 (ETH)")
+    st.altair_chart(flow_chart(df_f, "flow_eth_final"), use_container_width=True)
+
+with tab_etha:
     st.header("ETHA (iShares Ethereum Trust)")
     df_etha = load_data("etha_tracker/etha_cost_basis_track.csv")
     if not df_etha.empty:
@@ -226,7 +190,45 @@ with tab2:
     else:
         st.warning("ETHA 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
 
-with tab3:
+# ══════════════════════════════════════════════════════════════
+# BSOL 탭
+# ══════════════════════════════════════════════════════════════
+@st.fragment(run_every=60)
+def bsol_live(df: pd.DataFrame) -> None:
+    sol_px = get_crypto_prices()["SOL"]
+    px_str = f"${sol_px:,.2f}" if sol_px else "N/A"
+
+    latest = df.iloc[-1]
+    avg_cost = float(latest["avg_buy_price_ex_staking"])
+    sol_held = float(latest.get("sol_in_trust", 0) or 0)
+    date_str = latest["date"].strftime("%m월 %d일")
+
+    if sol_px and avg_cost > 0:
+        gap_pct = (sol_px - avg_cost) / avg_cost * 100
+        gap_str = f"{gap_pct:+.2f}%"
+    else:
+        gap_str = "N/A"
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("현재 SOL 시장가",    px_str)
+    c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}")
+    c3.metric("평단가 대비 괴리율",  gap_str)
+    c4.metric(f"{date_str} 순매수", f"{float(latest['flow_sol_final']):,.4f} SOL")
+    c5.metric("추정 SOL 보유량",    f"{sol_held:,.2f} SOL")
+
+    period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="bsol_period")
+    cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
+    df_f   = df[df["date"] >= cutoff].reset_index(drop=True)
+
+    st.subheader("평단가 vs 현재가 추세")
+    chart_data = df_f[["date", "implied_sol_px", "avg_buy_price_ex_staking"]].set_index("date")
+    chart_data.columns = ["시장가 (Market Price)", "기관 평단가 (Cost Basis)"]
+    st.line_chart(chart_data, color=["#FFFFFF", "#FFD700"])
+
+    st.subheader("기관 자금 흐름 (SOL)")
+    st.altair_chart(flow_chart(df_f, "flow_sol_final"), use_container_width=True)
+
+with tab_bsol:
     st.header("BSOL (Bitwise Solana Staking ETF)")
     df_bsol = load_data("bsol_tracker/bsol_cost_basis_track.csv")
     if not df_bsol.empty:
