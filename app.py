@@ -136,6 +136,9 @@ def ibit_live(df: pd.DataFrame) -> None:
     st.subheader("기관 자금 흐름 (BTC)")
     st.altair_chart(flow_chart(df_f, "flow_btc_final"), use_container_width=True)
 
+    st.subheader("ETF 프리미엄 / 디스카운트")
+    st.altair_chart(flow_chart(df_f, "premium_discount_pct"), use_container_width=True)
+
 with tab_ibit:
     st.header("IBIT (iShares Bitcoin Trust)")
     df_ibit = load_data("ibit_tracker/ibit_cost_basis_track.csv")
@@ -182,6 +185,9 @@ def etha_live(df: pd.DataFrame) -> None:
     st.subheader("기관 자금 흐름 (ETH)")
     st.altair_chart(flow_chart(df_f, "flow_eth_final"), use_container_width=True)
 
+    st.subheader("ETF 프리미엄 / 디스카운트")
+    st.altair_chart(flow_chart(df_f, "premium_discount_pct"), use_container_width=True)
+
 with tab_etha:
     st.header("ETHA (iShares Ethereum Trust)")
     df_etha = load_data("etha_tracker/etha_cost_basis_track.csv")
@@ -216,6 +222,18 @@ def bsol_live(df: pd.DataFrame) -> None:
     c4.metric(f"{date_str} 순매수", f"{float(latest['flow_sol_final']):,.4f} SOL")
     c5.metric("추정 SOL 보유량",    f"{sol_held:,.2f} SOL")
 
+    st.subheader("스테이킹 현황")
+    staking_rate = float(latest.get("net_staking_reward_rate_pct") or 0)
+    sponsor_fee  = float(latest.get("sponsor_fee_pct") or 0)
+    cum_reward   = float(latest.get("cumulative_est_staking_sol") or 0)
+    obs_yield    = latest.get("observed_annual_yield_pct")
+    obs_yield_str = f"{float(obs_yield):.2f}%" if obs_yield and str(obs_yield) not in ("", "nan") else "N/A"
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("스테이킹 APR",      f"{staking_rate:.2f}%")
+    s2.metric("스폰서 피",          f"{sponsor_fee:.2f}%")
+    s3.metric("누적 스테이킹 보상", f"{cum_reward:,.2f} SOL")
+    s4.metric("관측 연간 수익률",   obs_yield_str)
+
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="bsol_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
     df_f   = df[df["date"] >= cutoff].reset_index(drop=True)
@@ -228,6 +246,9 @@ def bsol_live(df: pd.DataFrame) -> None:
     st.subheader("기관 자금 흐름 (SOL)")
     st.altair_chart(flow_chart(df_f, "flow_sol_final"), use_container_width=True)
 
+    st.subheader("ETF 프리미엄 / 디스카운트")
+    st.altair_chart(flow_chart(df_f, "premium_discount_pct"), use_container_width=True)
+
 with tab_bsol:
     st.header("BSOL (Bitwise Solana Staking ETF)")
     df_bsol = load_data("bsol_tracker/bsol_cost_basis_track.csv")
@@ -235,4 +256,15 @@ with tab_bsol:
         bsol_live(df_bsol)
     else:
         st.warning("BSOL 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
+
+# ── 푸터 ──────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown(
+    "<div style='text-align:center; color:#888; font-size:0.8em;'>"
+    "본 대시보드는 정보 제공 목적의 개인 프로젝트이며, 투자 조언이 아닙니다. · "
+    "This dashboard is for informational purposes only and does not constitute investment advice.<br>"
+    "자세한 내용은 <a href='https://github.com/jungmin1212/etf-dashboard/blob/main/LEGAL.md' target='_blank'>법적 고지 · Legal Notice</a>를 참조하세요."
+    "</div>",
+    unsafe_allow_html=True,
+)
 
