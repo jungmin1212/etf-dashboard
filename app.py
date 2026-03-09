@@ -43,7 +43,7 @@ def load_data(file_name: str) -> pd.DataFrame:
         return df
     return pd.DataFrame()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_crypto_prices() -> dict:
     prices = {"SOL": None, "BTC": None, "ETH": None}
     try:
@@ -93,7 +93,7 @@ st.title("ETF 추적 대시보드")
 st.markdown("블랙록(IBIT·ETHA)과 비트와이즈(BSOL) 추정 평단가와 자금 흐름을 추적합니다.")
 col_info1, col_info2 = st.columns(2)
 col_info1.info("📊 기관 데이터(평단가·보유량·자금흐름): 매일 오후 12시(KST) 자동 최신화")
-col_info2.success("⚡ 현재 시장가: Yahoo Finance 실시간 조회 · 1분마다 자동 갱신")
+col_info2.success("⚡ 현재 시장가: Yahoo Finance 조회 · 5분마다 자동 갱신")
 
 # ── 탭 ────────────────────────────────────────────────────────
 tab_ibit, tab_etha, tab_bsol = st.tabs(["비트코인 (IBIT)", "이더리움 (ETHA)", "솔라나 (BSOL)"])
@@ -101,7 +101,7 @@ tab_ibit, tab_etha, tab_bsol = st.tabs(["비트코인 (IBIT)", "이더리움 (ET
 # ══════════════════════════════════════════════════════════════
 # IBIT 탭
 # ══════════════════════════════════════════════════════════════
-@st.fragment(run_every=60)
+@st.fragment(run_every=300)
 def ibit_live(df: pd.DataFrame) -> None:
     btc_px = get_crypto_prices()["BTC"]
     px_str = f"${btc_px:,.2f}" if btc_px else "N/A"
@@ -147,7 +147,7 @@ with tab_ibit:
 # ══════════════════════════════════════════════════════════════
 # ETHA 탭
 # ══════════════════════════════════════════════════════════════
-@st.fragment(run_every=60)
+@st.fragment(run_every=300)
 def etha_live(df: pd.DataFrame) -> None:
     eth_px = get_crypto_prices()["ETH"]
     px_str = f"${eth_px:,.2f}" if eth_px else "N/A"
@@ -193,7 +193,7 @@ with tab_etha:
 # ══════════════════════════════════════════════════════════════
 # BSOL 탭
 # ══════════════════════════════════════════════════════════════
-@st.fragment(run_every=60)
+@st.fragment(run_every=300)
 def bsol_live(df: pd.DataFrame) -> None:
     sol_px = get_crypto_prices()["SOL"]
     px_str = f"${sol_px:,.2f}" if sol_px else "N/A"
