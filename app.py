@@ -263,7 +263,7 @@ st.markdown(
     "<div style='text-align:center; color:#888; font-size:0.8em;'>"
     "본 대시보드는 정보 제공 목적의 개인 프로젝트이며, 투자 조언이 아닙니다. · "
     "This dashboard is for informational purposes only and does not constitute investment advice.<br>"
-    "자세한 내용은 <a href='https://github.com/jungmin1212/etf-dashboard/blob/main/LEGAL.md' target='_blank'>법적 고지 · Legal Notice</a>를 참조하세요."
+    "자세한 내용은 <a href='https://jungmin1212.github.io/etf-dashboard/etf-dashboard.html' target='_blank'>법적 고지 · Legal Notice</a>를 참조하세요."
     "</div>",
     unsafe_allow_html=True,
 )
