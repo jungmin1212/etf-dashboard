@@ -136,9 +136,6 @@ def ibit_live(df: pd.DataFrame) -> None:
     st.subheader("기관 자금 흐름 (BTC)")
     st.altair_chart(flow_chart(df_f, "flow_btc_final"), use_container_width=True)
 
-    st.subheader("ETF 프리미엄 / 디스카운트")
-    st.altair_chart(flow_chart(df_f, "premium_discount_pct"), use_container_width=True)
-
 with tab_ibit:
     st.header("IBIT (iShares Bitcoin Trust)")
     df_ibit = load_data("ibit_tracker/ibit_cost_basis_track.csv")
@@ -184,9 +181,6 @@ def etha_live(df: pd.DataFrame) -> None:
 
     st.subheader("기관 자금 흐름 (ETH)")
     st.altair_chart(flow_chart(df_f, "flow_eth_final"), use_container_width=True)
-
-    st.subheader("ETF 프리미엄 / 디스카운트")
-    st.altair_chart(flow_chart(df_f, "premium_discount_pct"), use_container_width=True)
 
 with tab_etha:
     st.header("ETHA (iShares Ethereum Trust)")
@@ -245,9 +239,6 @@ def bsol_live(df: pd.DataFrame) -> None:
 
     st.subheader("기관 자금 흐름 (SOL)")
     st.altair_chart(flow_chart(df_f, "flow_sol_final"), use_container_width=True)
-
-    st.subheader("ETF 프리미엄 / 디스카운트")
-    st.altair_chart(flow_chart(df_f, "premium_discount_pct"), use_container_width=True)
 
 with tab_bsol:
     st.header("BSOL (Bitwise Solana Staking ETF)")
