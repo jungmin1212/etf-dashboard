@@ -109,7 +109,9 @@ def ibit_live(df: pd.DataFrame) -> None:
     latest = df.iloc[-1]
     avg_cost = float(latest["avg_buy_price_ex_fee"])
     btc_held = float(latest.get("btc_in_trust", 0) or 0)
-    date_str = latest["date"].strftime("%m월 %d일")
+    # T+1 결제 구조: 최신 행의 flow는 전 영업일 거래분 → 이전 행 날짜로 표기
+    flow_date = df.iloc[-2]["date"] if len(df) >= 2 else latest["date"]
+    date_str = flow_date.strftime("%m월 %d일")
 
     if btc_px and avg_cost > 0:
         gap_pct = (btc_px - avg_cost) / avg_cost * 100
@@ -155,7 +157,8 @@ def etha_live(df: pd.DataFrame) -> None:
     latest = df.iloc[-1]
     avg_cost = float(latest["avg_buy_price_ex_fee"])
     eth_held = float(latest.get("eth_in_trust", 0) or 0)
-    date_str = latest["date"].strftime("%m월 %d일")
+    flow_date = df.iloc[-2]["date"] if len(df) >= 2 else latest["date"]
+    date_str = flow_date.strftime("%m월 %d일")
 
     if eth_px and avg_cost > 0:
         gap_pct = (eth_px - avg_cost) / avg_cost * 100
@@ -201,7 +204,8 @@ def bsol_live(df: pd.DataFrame) -> None:
     latest = df.iloc[-1]
     avg_cost = float(latest["avg_buy_price_ex_staking"])
     sol_held = float(latest.get("sol_in_trust", 0) or 0)
-    date_str = latest["date"].strftime("%m월 %d일")
+    flow_date = df.iloc[-2]["date"] if len(df) >= 2 else latest["date"]
+    date_str = flow_date.strftime("%m월 %d일")
 
     if sol_px and avg_cost > 0:
         gap_pct = (sol_px - avg_cost) / avg_cost * 100
