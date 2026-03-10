@@ -119,12 +119,14 @@ def ibit_live(df: pd.DataFrame) -> None:
     flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
     date_str  = flow_date.strftime("%m월 %d일")
 
+    prev_btc_px = st.session_state.get("prev_btc_px")
+
     if btc_px and avg_cost > 0:
         gap_pct = (btc_px - avg_cost) / avg_cost * 100
         gap_str = f"{gap_pct:+.2f}%"
-        if has_prev:
-            prev_implied = float(prev.get("implied_btc_px", 0) or 0)
-            gap_delta = f"{gap_pct - (prev_implied - prev_cost) / prev_cost * 100:+.2f}%p" if prev_implied and prev_cost > 0 else None
+        if prev_btc_px and avg_cost > 0:
+            prev_gap_pct = (prev_btc_px - avg_cost) / avg_cost * 100
+            gap_delta = f"{gap_pct - prev_gap_pct:+.2f}%p"
         else:
             gap_delta = None
     else:
@@ -140,6 +142,8 @@ def ibit_live(df: pd.DataFrame) -> None:
               delta=f"{flow_val - prev_flow_val:+,.4f} BTC" if has_prev else None)
     c5.metric("추정 BTC 보유량",    f"{btc_held:,.2f} BTC",
               delta=f"{btc_held - prev_held:+,.2f} BTC" if has_prev else None)
+
+    st.session_state["prev_btc_px"] = btc_px
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="ibit_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
@@ -185,12 +189,14 @@ def etha_live(df: pd.DataFrame) -> None:
     flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
     date_str  = flow_date.strftime("%m월 %d일")
 
+    prev_eth_px = st.session_state.get("prev_eth_px")
+
     if eth_px and avg_cost > 0:
         gap_pct = (eth_px - avg_cost) / avg_cost * 100
         gap_str = f"{gap_pct:+.2f}%"
-        if has_prev:
-            prev_implied = float(prev.get("implied_eth_px", 0) or 0)
-            gap_delta = f"{gap_pct - (prev_implied - prev_cost) / prev_cost * 100:+.2f}%p" if prev_implied and prev_cost > 0 else None
+        if prev_eth_px and avg_cost > 0:
+            prev_gap_pct = (prev_eth_px - avg_cost) / avg_cost * 100
+            gap_delta = f"{gap_pct - prev_gap_pct:+.2f}%p"
         else:
             gap_delta = None
     else:
@@ -206,6 +212,8 @@ def etha_live(df: pd.DataFrame) -> None:
               delta=f"{flow_val - prev_flow_val:+,.4f} ETH" if has_prev else None)
     c5.metric("추정 ETH 보유량",    f"{eth_held:,.2f} ETH",
               delta=f"{eth_held - prev_held:+,.2f} ETH" if has_prev else None)
+
+    st.session_state["prev_eth_px"] = eth_px
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="etha_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
@@ -251,12 +259,14 @@ def bsol_live(df: pd.DataFrame) -> None:
     flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
     date_str  = flow_date.strftime("%m월 %d일")
 
+    prev_sol_px = st.session_state.get("prev_sol_px")
+
     if sol_px and avg_cost > 0:
         gap_pct = (sol_px - avg_cost) / avg_cost * 100
         gap_str = f"{gap_pct:+.2f}%"
-        if has_prev:
-            prev_implied = float(prev.get("implied_sol_px", 0) or 0)
-            gap_delta = f"{gap_pct - (prev_implied - prev_cost) / prev_cost * 100:+.2f}%p" if prev_implied and prev_cost > 0 else None
+        if prev_sol_px and avg_cost > 0:
+            prev_gap_pct = (prev_sol_px - avg_cost) / avg_cost * 100
+            gap_delta = f"{gap_pct - prev_gap_pct:+.2f}%p"
         else:
             gap_delta = None
     else:
@@ -272,6 +282,8 @@ def bsol_live(df: pd.DataFrame) -> None:
               delta=f"{flow_val - prev_flow_val:+,.4f} SOL" if has_prev else None)
     c5.metric("추정 SOL 보유량",    f"{sol_held:,.2f} SOL",
               delta=f"{sol_held - prev_held:+,.2f} SOL" if has_prev else None)
+
+    st.session_state["prev_sol_px"] = sol_px
 
     st.subheader("스테이킹 현황")
     staking_rate = float(latest.get("net_staking_reward_rate_pct") or 0)
