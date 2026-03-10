@@ -106,53 +106,41 @@ def ibit_live(df: pd.DataFrame) -> None:
     btc_px = get_crypto_prices()["BTC"]
     px_str = f"${btc_px:,.2f}" if btc_px else "N/A"
 
-    has_prev      = len(df) >= 2
-    latest        = df.iloc[-1]
-    prev          = df.iloc[-2] if has_prev else latest
-    avg_cost      = float(latest["avg_buy_price_ex_fee"])
-    prev_cost     = float(prev["avg_buy_price_ex_fee"])
-    btc_held      = float(latest.get("btc_in_trust", 0) or 0)
-    prev_held     = float(prev.get("btc_in_trust", 0) or 0)
-    flow_val      = float(latest["flow_btc_final"])
-    prev_flow_val = float(prev.get("flow_btc_final", 0) or 0)
+    has_prev  = len(df) >= 2
+    latest    = df.iloc[-1]
+    prev      = df.iloc[-2] if has_prev else latest
+    avg_cost  = float(latest["avg_buy_price_ex_fee"])
+    prev_cost = float(prev["avg_buy_price_ex_fee"])
+    btc_held  = float(latest.get("btc_in_trust", 0) or 0)
+    prev_held = float(prev.get("btc_in_trust", 0) or 0)
+    flow_val  = float(latest["flow_btc_final"])
     # T+1 결제 구조: 최신 행의 flow는 전 영업일 거래분 → 이전 행 날짜로 표기
     flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
     date_str  = flow_date.strftime("%m월 %d일")
 
-    prev_btc_px = st.session_state.get("prev_btc_px")
-
     if btc_px and avg_cost > 0:
         gap_pct = (btc_px - avg_cost) / avg_cost * 100
         gap_str = f"{gap_pct:+.2f}%"
-        if prev_btc_px and avg_cost > 0:
-            prev_gap_pct = (prev_btc_px - avg_cost) / avg_cost * 100
-            gap_delta = f"{gap_pct - prev_gap_pct:+.2f}%p"
-        else:
-            gap_delta = None
     else:
-        gap_str   = "N/A"
-        gap_delta = None
+        gap_str = "N/A"
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("현재 BTC 시장가",    px_str)
     c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}",
               delta=f"${avg_cost - prev_cost:+,.2f}" if has_prev else None)
-    c3.metric("평단가 대비 괴리율",  gap_str, delta=gap_delta)
-    c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} BTC",
-              delta=f"{flow_val - prev_flow_val:+,.4f} BTC" if has_prev else None)
+    c3.metric("평단가 대비 괴리율",  gap_str)
+    c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} BTC")
     c5.metric("추정 BTC 보유량",    f"{btc_held:,.2f} BTC",
               delta=f"{btc_held - prev_held:+,.2f} BTC" if has_prev else None)
-
-    st.session_state["prev_btc_px"] = btc_px
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="ibit_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
 
     df_chart = df[["date", "implied_btc_px", "avg_buy_price_ex_fee"]].copy()
-    df_chart["MA7"]   = df_chart["implied_btc_px"].rolling(7).mean()
+    df_chart["MA20"]  = df_chart["implied_btc_px"].rolling(20).mean()
     df_chart["MA200"] = df_chart["implied_btc_px"].rolling(200).mean()
     df_f = df_chart[df_chart["date"] >= cutoff].set_index("date")
-    df_f.columns = ["시장가", "기관 평단가", "MA7", "MA200"]
+    df_f.columns = ["시장가", "기관 평단가", "MA20", "MA200"]
 
     st.subheader("평단가 vs 현재가 추세")
     st.line_chart(df_f, color=["#FFFFFF", "#FF8C00", "#00BFFF", "#FF6B6B"])
@@ -177,52 +165,40 @@ def etha_live(df: pd.DataFrame) -> None:
     eth_px = get_crypto_prices()["ETH"]
     px_str = f"${eth_px:,.2f}" if eth_px else "N/A"
 
-    has_prev      = len(df) >= 2
-    latest        = df.iloc[-1]
-    prev          = df.iloc[-2] if has_prev else latest
-    avg_cost      = float(latest["avg_buy_price_ex_fee"])
-    prev_cost     = float(prev["avg_buy_price_ex_fee"])
-    eth_held      = float(latest.get("eth_in_trust", 0) or 0)
-    prev_held     = float(prev.get("eth_in_trust", 0) or 0)
-    flow_val      = float(latest["flow_eth_final"])
-    prev_flow_val = float(prev.get("flow_eth_final", 0) or 0)
+    has_prev  = len(df) >= 2
+    latest    = df.iloc[-1]
+    prev      = df.iloc[-2] if has_prev else latest
+    avg_cost  = float(latest["avg_buy_price_ex_fee"])
+    prev_cost = float(prev["avg_buy_price_ex_fee"])
+    eth_held  = float(latest.get("eth_in_trust", 0) or 0)
+    prev_held = float(prev.get("eth_in_trust", 0) or 0)
+    flow_val  = float(latest["flow_eth_final"])
     flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
     date_str  = flow_date.strftime("%m월 %d일")
-
-    prev_eth_px = st.session_state.get("prev_eth_px")
 
     if eth_px and avg_cost > 0:
         gap_pct = (eth_px - avg_cost) / avg_cost * 100
         gap_str = f"{gap_pct:+.2f}%"
-        if prev_eth_px and avg_cost > 0:
-            prev_gap_pct = (prev_eth_px - avg_cost) / avg_cost * 100
-            gap_delta = f"{gap_pct - prev_gap_pct:+.2f}%p"
-        else:
-            gap_delta = None
     else:
-        gap_str   = "N/A"
-        gap_delta = None
+        gap_str = "N/A"
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("현재 ETH 시장가",    px_str)
     c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}",
               delta=f"${avg_cost - prev_cost:+,.2f}" if has_prev else None)
-    c3.metric("평단가 대비 괴리율",  gap_str, delta=gap_delta)
-    c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} ETH",
-              delta=f"{flow_val - prev_flow_val:+,.4f} ETH" if has_prev else None)
+    c3.metric("평단가 대비 괴리율",  gap_str)
+    c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} ETH")
     c5.metric("추정 ETH 보유량",    f"{eth_held:,.2f} ETH",
               delta=f"{eth_held - prev_held:+,.2f} ETH" if has_prev else None)
-
-    st.session_state["prev_eth_px"] = eth_px
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="etha_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
 
     df_chart = df[["date", "implied_eth_px", "avg_buy_price_ex_fee"]].copy()
-    df_chart["MA7"]   = df_chart["implied_eth_px"].rolling(7).mean()
+    df_chart["MA20"]  = df_chart["implied_eth_px"].rolling(20).mean()
     df_chart["MA200"] = df_chart["implied_eth_px"].rolling(200).mean()
     df_f = df_chart[df_chart["date"] >= cutoff].set_index("date")
-    df_f.columns = ["시장가", "기관 평단가", "MA7", "MA200"]
+    df_f.columns = ["시장가", "기관 평단가", "MA20", "MA200"]
 
     st.subheader("평단가 vs 현재가 추세")
     st.line_chart(df_f, color=["#FFFFFF", "#FFD700", "#00BFFF", "#FF6B6B"])
@@ -247,43 +223,31 @@ def bsol_live(df: pd.DataFrame) -> None:
     sol_px = get_crypto_prices()["SOL"]
     px_str = f"${sol_px:,.2f}" if sol_px else "N/A"
 
-    has_prev      = len(df) >= 2
-    latest        = df.iloc[-1]
-    prev          = df.iloc[-2] if has_prev else latest
-    avg_cost      = float(latest["avg_buy_price_ex_staking"])
-    prev_cost     = float(prev["avg_buy_price_ex_staking"])
-    sol_held      = float(latest.get("sol_in_trust", 0) or 0)
-    prev_held     = float(prev.get("sol_in_trust", 0) or 0)
-    flow_val      = float(latest["flow_sol_final"])
-    prev_flow_val = float(prev.get("flow_sol_final", 0) or 0)
+    has_prev  = len(df) >= 2
+    latest    = df.iloc[-1]
+    prev      = df.iloc[-2] if has_prev else latest
+    avg_cost  = float(latest["avg_buy_price_ex_staking"])
+    prev_cost = float(prev["avg_buy_price_ex_staking"])
+    sol_held  = float(latest.get("sol_in_trust", 0) or 0)
+    prev_held = float(prev.get("sol_in_trust", 0) or 0)
+    flow_val  = float(latest["flow_sol_final"])
     flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
     date_str  = flow_date.strftime("%m월 %d일")
-
-    prev_sol_px = st.session_state.get("prev_sol_px")
 
     if sol_px and avg_cost > 0:
         gap_pct = (sol_px - avg_cost) / avg_cost * 100
         gap_str = f"{gap_pct:+.2f}%"
-        if prev_sol_px and avg_cost > 0:
-            prev_gap_pct = (prev_sol_px - avg_cost) / avg_cost * 100
-            gap_delta = f"{gap_pct - prev_gap_pct:+.2f}%p"
-        else:
-            gap_delta = None
     else:
-        gap_str   = "N/A"
-        gap_delta = None
+        gap_str = "N/A"
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("현재 SOL 시장가",    px_str)
     c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}",
               delta=f"${avg_cost - prev_cost:+,.2f}" if has_prev else None)
-    c3.metric("평단가 대비 괴리율",  gap_str, delta=gap_delta)
-    c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} SOL",
-              delta=f"{flow_val - prev_flow_val:+,.4f} SOL" if has_prev else None)
+    c3.metric("평단가 대비 괴리율",  gap_str)
+    c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} SOL")
     c5.metric("추정 SOL 보유량",    f"{sol_held:,.2f} SOL",
               delta=f"{sol_held - prev_held:+,.2f} SOL" if has_prev else None)
-
-    st.session_state["prev_sol_px"] = sol_px
 
     st.subheader("스테이킹 현황")
     staking_rate = float(latest.get("net_staking_reward_rate_pct") or 0)
@@ -301,10 +265,10 @@ def bsol_live(df: pd.DataFrame) -> None:
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
 
     df_chart = df[["date", "implied_sol_px", "avg_buy_price_ex_staking"]].copy()
-    df_chart["MA7"]   = df_chart["implied_sol_px"].rolling(7).mean()
+    df_chart["MA20"]  = df_chart["implied_sol_px"].rolling(20).mean()
     df_chart["MA200"] = df_chart["implied_sol_px"].rolling(200).mean()
     df_f = df_chart[df_chart["date"] >= cutoff].set_index("date")
-    df_f.columns = ["시장가", "기관 평단가", "MA7", "MA200"]
+    df_f.columns = ["시장가", "기관 평단가", "MA20", "MA200"]
 
     st.subheader("평단가 vs 현재가 추세")
     st.line_chart(df_f, color=["#FFFFFF", "#FFD700", "#00BFFF", "#FF6B6B"])
@@ -331,4 +295,3 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
-
