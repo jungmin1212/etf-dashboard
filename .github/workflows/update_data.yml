@@ -2,7 +2,7 @@ name: ETF 데이터 자동 업데이트
 
 on:
   schedule:
-    - cron: '0 3 * * *'   # 매일 03:00 UTC = 한국시간 오후 12시
+    - cron: '0 3-9 * * 1-5'  # 평일 03~09 UTC = 한국시간 오후 12시~6시 (1시간 간격)
   workflow_dispatch:        # 수동 실행 버튼
 
 jobs:
