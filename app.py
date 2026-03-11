@@ -126,8 +126,9 @@ def ibit_live(df: pd.DataFrame) -> None:
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("현재 BTC 시장가",    px_str)
+    _d = avg_cost - prev_cost
     c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}",
-              delta=f"${avg_cost - prev_cost:+,.2f}" if has_prev else None)
+              delta=f"{'+' if _d >= 0 else '-'}${abs(_d):,.2f}" if has_prev else None)
     c3.metric("평단가 대비 괴리율",  gap_str)
     c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} BTC")
     c5.metric("추정 BTC 보유량",    f"{btc_held:,.2f} BTC",
@@ -184,8 +185,9 @@ def etha_live(df: pd.DataFrame) -> None:
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("현재 ETH 시장가",    px_str)
+    _d = avg_cost - prev_cost
     c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}",
-              delta=f"${avg_cost - prev_cost:+,.2f}" if has_prev else None)
+              delta=f"{'+' if _d >= 0 else '-'}${abs(_d):,.2f}" if has_prev else None)
     c3.metric("평단가 대비 괴리율",  gap_str)
     c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} ETH")
     c5.metric("추정 ETH 보유량",    f"{eth_held:,.2f} ETH",
@@ -242,8 +244,9 @@ def bsol_live(df: pd.DataFrame) -> None:
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("현재 SOL 시장가",    px_str)
+    _d = avg_cost - prev_cost
     c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}",
-              delta=f"${avg_cost - prev_cost:+,.2f}" if has_prev else None)
+              delta=f"{'+' if _d >= 0 else '-'}${abs(_d):,.2f}" if has_prev else None)
     c3.metric("평단가 대비 괴리율",  gap_str)
     c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} SOL")
     c5.metric("추정 SOL 보유량",    f"{sol_held:,.2f} SOL",
