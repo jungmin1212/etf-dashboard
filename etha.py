@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
+
+from utils import to_float, find_first, fetch_with_retry, fetch_page_text, HEADERS
 
 URL          = "https://www.ishares.com/us/products/337614/ishares-ethereum-trust-etf"
 XLS_URL      = ("https://www.ishares.com/us/products/337614/fund/"
@@ -19,61 +19,89 @@ TRACK_CSV    = DATA_DIR / "etha_cost_basis_track.csv"
 INCEPTION    = pd.Timestamp("2024-07-23")   # ETHA 상장일
 MGMT_FEE_PCT = 0.25                          # 연 운용보수 (%)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/123.0.0.0 Safari/537.36"
-    )
-}
-
 SEED_AVG_COST = None
 
 
-# ── 유틸 ──────────────────────────────────────────────────────
-def to_float(x):
-    if x is None or (isinstance(x, float) and np.isnan(x)):
-        return np.nan
-    s = str(x).strip().replace("$", "").replace(",", "").replace("%", "")
-    return float(s) if s not in {"", "-", "—"} else np.nan
+# ── XLS에서 최신 NAV/주식수 가져오기 (Primary 소스) ────────────────────────────
+def fetch_xls_latest():
+    """iShares 공식 XLS에서 최신 행의 date, nav_usd, shares_outstanding 추출."""
+    try:
+        print("[XLS] iShares ETHA XLS 다운로드 중...", flush=True)
+        r = fetch_with_retry(XLS_URL, headers=HEADERS, timeout=30)
+        cells = re.findall(r'<ss:Data[^>]*>([^<]+)</ss:Data>', r.text)
+
+        header_idx = next((i for i, c in enumerate(cells) if c.strip() == "As Of"), None)
+        if header_idx is None:
+            print("[XLS] 헤더를 찾지 못함 — HTML fallback")
+            return None
+
+        # XLS는 최신→과거 순 정렬 → 모든 행 파싱 후 최대 날짜 선택
+        rows = []
+        i = header_idx + 4
+        while i + 3 < len(cells):
+            try:
+                d   = pd.to_datetime(cells[i].strip()).date().isoformat()
+                nav = float(cells[i + 1].strip().replace(",", ""))
+                shr = float(cells[i + 3].strip().replace(",", ""))
+                rows.append({"date": d, "nav_usd": nav, "shares_outstanding": shr})
+                i += 4
+            except Exception:
+                break
+
+        if not rows:
+            return None
+
+        latest = max(rows, key=lambda r: r["date"])
+        print(f"[XLS] 최신 데이터: {latest['date']} | NAV=${latest['nav_usd']:.2f} | 주식수={latest['shares_outstanding']:,.0f}")
+        return latest
+    except Exception as e:
+        print(f"[XLS 실패] {e} — HTML fallback 사용")
+        return None
 
 
-def find_first(text, patterns):
-    for pat in patterns:
-        m = re.search(pat, text, re.I | re.S)
-        if m:
-            return to_float(m.group(1))
-    return np.nan
+# ── HTML에서 basket/closing/premium 가져오기 ──────────────────────────────────
+def fetch_html_supplementary():
+    """HTML 페이지에서 XLS에 없는 필드 추출."""
+    text = fetch_page_text(URL, headers=HEADERS)
 
-
-# ── 오늘 데이터 스크래핑 ──────────────────────────────────────
-def fetch_page_text(url=URL):
-    r = requests.get(url, headers=HEADERS, timeout=30)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
-    parts = [soup.get_text(chr(10), strip=True)]
-    for s in soup.find_all("script"):
-        txt = s.string if s.string else s.get_text(" ", strip=True)
-        if txt:
-            parts.append(txt)
-    return chr(10).join(parts)
-
-
-def parse_snapshot(text):
     date_m = re.search(r"NAV as of\s+([A-Za-z]+ \d{1,2},\s*\d{4})", text, re.I)
     asof = (pd.to_datetime(date_m.group(1)).date().isoformat()
             if date_m else datetime.now(timezone.utc).date().isoformat())
 
-    nav           = find_first(text, [r"NAV as of.*?\n\s*\$([\d,]+(?:\.\d+)?)"])
-    net_assets    = find_first(text, [r"Net Assets of Fund\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"])
-    shares        = find_first(text, [r"Shares Outstanding\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"])
-    basket_usd    = find_first(text, [r"Basket Amount\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"])
-    basket_eth    = find_first(text, [
-                        r"(?:Indicative )?Basket Ether(?:eum)? Amount\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)",
-                        r"Basket Ether(?:eum)? Amount\s+as of.*?\n\s*([\d,]+(?:\.\d+)?)",
-                    ])
-    closing_price = find_first(text, [r"Closing Price\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"])
-    premium_disc  = find_first(text, [r"Premium/Discount\s*\nas of.*?\n\s*([-\d.]+)"])
+    data = {
+        "date":                 asof,
+        "net_assets_usd":       find_first(text, [r"Net Assets of Fund\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"]),
+        "basket_usd":           find_first(text, [r"Basket Amount\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"]),
+        "basket_eth":           find_first(text, [
+                                    r"(?:Indicative )?Basket Ether(?:eum)? Amount\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)",
+                                    r"Basket Ether(?:eum)? Amount\s+as of.*?\n\s*([\d,]+(?:\.\d+)?)",
+                                ]),
+        "closing_price_usd":    find_first(text, [r"Closing Price\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"]),
+        "premium_discount_pct": find_first(text, [r"Premium/Discount\s*\nas of.*?\n\s*([-\d.]+)"]),
+        # HTML fallback용
+        "nav_usd":              find_first(text, [r"NAV as of.*?\n\s*\$([\d,]+(?:\.\d+)?)"]),
+        "shares_outstanding":   find_first(text, [r"Shares Outstanding\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"]),
+    }
+    return data
+
+
+# ── 스냅샷 조립 ──────────────────────────────────────────────────────────────
+def build_snapshot():
+    """XLS(primary) + HTML(supplementary)로 오늘 스냅샷 생성."""
+    xls_data = fetch_xls_latest()
+    html_data = fetch_html_supplementary()
+
+    if xls_data:
+        nav    = xls_data["nav_usd"]
+        shares = xls_data["shares_outstanding"]
+        asof   = xls_data["date"]
+    else:
+        nav    = html_data["nav_usd"]
+        shares = html_data["shares_outstanding"]
+        asof   = html_data["date"]
+
+    basket_usd = html_data["basket_usd"]
+    basket_eth = html_data["basket_eth"]
 
     eth_per_share = np.nan
     if not np.isnan(basket_eth) and not np.isnan(basket_usd) and not np.isnan(nav) and nav > 0:
@@ -84,28 +112,31 @@ def parse_snapshot(text):
     snap = {
         "date":                 asof,
         "obs_ts_utc":           datetime.now(timezone.utc).isoformat(),
-        "net_assets_usd":       net_assets,
+        "net_assets_usd":       html_data["net_assets_usd"],
         "nav_usd":              nav,
-        "closing_price_usd":    closing_price,
-        "premium_discount_pct": premium_disc,
+        "closing_price_usd":    html_data["closing_price_usd"],
+        "premium_discount_pct": html_data["premium_discount_pct"],
         "shares_outstanding":   shares,
         "basket_usd":           basket_usd,
         "basket_eth":           basket_eth,
         "eth_per_share":        eth_per_share,
         "management_fee_pct":   MGMT_FEE_PCT,
     }
-    missing = [f for f in ["net_assets_usd", "nav_usd", "shares_outstanding", "eth_per_share"]
-               if np.isnan(snap[f])]
+
+    critical = ["nav_usd", "shares_outstanding", "eth_per_share"]
+    missing = [f for f in critical if np.isnan(snap[f])]
     if missing:
-        print(f"\n[경고] 웹사이트 구조 변경 의심. 파싱 실패: {', '.join(missing)}\n")
+        print(f"\n[경고] 핵심 데이터 누락: {', '.join(missing)}")
+        print("  웹사이트 구조 변경 의심 → CSV 업데이트 스킵\n")
+        return None
+
     return snap
 
 
-# ── XLS 백필 ──────────────────────────────────────────────────
+# ── XLS 백필 ──────────────────────────────────────────────────────────────────
 def backfill_from_ishares_xls(current_eth_per_share: float):
     print("[백필] iShares ETHA XLS 다운로드 중...", flush=True)
-    r = requests.get(XLS_URL, headers=HEADERS, timeout=30)
-    r.raise_for_status()
+    r = fetch_with_retry(XLS_URL, headers=HEADERS, timeout=30)
     cells = re.findall(r'<ss:Data[^>]*>([^<]+)</ss:Data>', r.text)
 
     header_idx = next((i for i, c in enumerate(cells) if c.strip() == "As Of"), None)
@@ -152,7 +183,7 @@ def backfill_from_ishares_xls(current_eth_per_share: float):
     return df
 
 
-# ── 스냅샷 저장 ───────────────────────────────────────────────
+# ── 스냅샷 저장 ───────────────────────────────────────────────────────────────
 def save_snapshot(snapshot):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     new_df = pd.DataFrame([snapshot])
@@ -181,7 +212,7 @@ def merge_and_save(backfill_df, live_snap):
     return combined
 
 
-# ── 평단가 계산 ───────────────────────────────────────────────
+# ── 평단가 계산 ───────────────────────────────────────────────────────────────
 def build_cost_basis_track(df, seed_avg_cost=None):
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -271,19 +302,34 @@ def build_cost_basis_track(df, seed_avg_cost=None):
     df["effective_cost_per_current_eth"] = eff_cost_list
     df["eth_inventory"]                  = inv_list
     df["confidence_score_0_1"]           = conf_list
-    df["observed_annual_fee_drag_pct"]   = -df["eth_per_share"].pct_change(fill_method=None) * (365.0 / day_gaps) * 100
+    df["observed_annual_fee_drag_pct"]   = -df["eth_per_share"].pct_change() * (365.0 / day_gaps) * 100
     df["estimated_annual_fee_pct"]       = df["management_fee_pct"]
     df["fee_model_error_pct"]            = (df["observed_annual_fee_drag_pct"]
                                             - df["estimated_annual_fee_pct"])
     return df
 
 
-# ── main ──────────────────────────────────────────────────────
+# ── main ──────────────────────────────────────────────────────────────────────
 def main():
     print("iShares ETHA 데이터 수집 중...", flush=True)
-    text     = fetch_page_text()
-    snapshot = parse_snapshot(text)
 
+    # 1. 오늘 스냅샷 생성 (XLS primary + HTML supplementary)
+    snapshot = build_snapshot()
+    if snapshot is None:
+        print("[중단] 핵심 데이터 누락으로 CSV 업데이트 스킵")
+        return
+
+    # 2. 스마트 스킵
+    if SNAPSHOT_CSV.exists():
+        existing = pd.read_csv(SNAPSHOT_CSV)
+        if not existing.empty and existing["date"].iloc[-1] == snapshot["date"]:
+            print(f"[스킵] 데이터 변경 없음 ({snapshot['date']}) - 재계산만 수행")
+            snap_df = save_snapshot(snapshot)
+            track_df = build_cost_basis_track(snap_df, seed_avg_cost=SEED_AVG_COST)
+            _save_track(track_df)
+            return
+
+    # 3. 백필 필요 여부
     current_eth_per_share = snapshot.get("eth_per_share", np.nan)
 
     needs_backfill = True
@@ -298,8 +344,13 @@ def main():
     else:
         snap_df = save_snapshot(snapshot)
 
+    # 4. 평단가 계산 + 저장
     track_df = build_cost_basis_track(snap_df, seed_avg_cost=SEED_AVG_COST)
+    _save_track(track_df)
+    _print_report(track_df)
 
+
+def _save_track(track_df):
     out_cols = [
         "date", "eth_in_trust", "net_assets_usd", "implied_eth_px",
         "nav_usd", "closing_price_usd", "premium_discount_pct",
@@ -314,6 +365,8 @@ def main():
     existing_cols = [c for c in out_cols if c in track_df.columns]
     track_df[existing_cols].to_csv(TRACK_CSV, index=False)
 
+
+def _print_report(track_df):
     latest   = track_df.iloc[-1]
     date_str = str(latest["date"].date())
     eth_px   = float(latest["implied_eth_px"])
