@@ -1,15 +1,14 @@
 # ibit_avg_cost_tracker.py
-# BlackRock iShares Bitcoin Trust ETF (IBIT) 펀드 BTC 평균 매수가 추적기
+# BlackRock iShares Bitcoin Trust ETF (IBIT) íë BTC íê·  ë§¤ìê° ì¶ì ê¸°
 
 import re
-import time
 from pathlib import Path
 from datetime import datetime, timezone, date as date_type
 
 import numpy as np
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
+
+from utils import to_float, find_first, fetch_with_retry, fetch_page_text, HEADERS
 
 URL          = "https://www.ishares.com/us/products/333011/blackrock-bitcoin-etf"
 XLS_URL      = ("https://www.ishares.com/us/products/333011/fund/"
@@ -17,61 +16,94 @@ XLS_URL      = ("https://www.ishares.com/us/products/333011/fund/"
 DATA_DIR     = Path("ibit_tracker")
 SNAPSHOT_CSV = DATA_DIR / "ibit_daily_snapshots.csv"
 TRACK_CSV    = DATA_DIR / "ibit_cost_basis_track.csv"
-INCEPTION    = pd.Timestamp("2024-01-11")   # IBIT 상장일
-MGMT_FEE_PCT = 0.25                          # 연 운용보수 (고정)
+INCEPTION    = pd.Timestamp("2024-01-11")   # IBIT ìì¥ì¼
+MGMT_FEE_PCT = 0.25                          # ì° ì´ì©ë³´ì (ê³ ì )
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/123.0.0.0 Safari/537.36"
-    )
-}
-
-SEED_AVG_COST = None   # 수동으로 알고 있으면 USD per BTC 입력
+SEED_AVG_COST = None   # ìëì¼ë¡ ìê³  ìì¼ë©´ USD per BTC ìë ¥
 
 
-# ── 유틸 ─────────────────────────────────────────────────────────────────────
-def to_float(x):
-    if x is None or (isinstance(x, float) and np.isnan(x)):
-        return np.nan
-    s = str(x).strip().replace("$", "").replace(",", "").replace("%", "")
-    return float(s) if s not in {"", "-", "—"} else np.nan
+# ââ XLSìì ìµì  NAV/ì£¼ìì ê°ì ¸ì¤ê¸° (Primary ìì¤) ââââââââââââââââââââââââââââ
+def fetch_xls_latest():
+    """
+    iShares ê³µì XLSìì ìµì  íì date, nav_usd, shares_outstanding ì¶ì¶.
+    ì¤í¨ ì None ë°í.
+    """
+    try:
+        print("[XLS] iShares XLS ë¤ì´ë¡ë ì¤...", flush=True)
+        r = fetch_with_retry(XLS_URL, headers=HEADERS, timeout=30)
+        cells = re.findall(r'<ss:Data[^>]*>([^<]+)</ss:Data>', r.text)
+
+        header_idx = next((i for i, c in enumerate(cells) if c.strip() == "As Of"), None)
+        if header_idx is None:
+            print("[XLS] í¤ëë¥¼ ì°¾ì§ ëª»í¨ â HTML fallback")
+            return None
+
+        # 4ì´ì© íì±: date, nav, ex-div(ë¬´ì), shares â ë§ì§ë§ ì í¨ íì´ ìµì 
+        # XLSë ìµì âê³¼ê±° ì ì ë ¬ â ëª¨ë  í íì± í ìµë ë ì§ ì í
+        rows = []
+        i = header_idx + 4
+        while i + 3 < len(cells):
+            try:
+                d   = pd.to_datetime(cells[i].strip()).date().isoformat()
+                nav = float(cells[i + 1].strip().replace(",", ""))
+                shr = float(cells[i + 3].strip().replace(",", ""))
+                rows.append({"date": d, "nav_usd": nav, "shares_outstanding": shr})
+                i += 4
+            except Exception:
+                break
+
+        if not rows:
+            return None
+
+        latest = max(rows, key=lambda r: r["date"])
+        print(f"[XLS] ìµì  ë°ì´í°: {latest['date']} | NAV=${latest['nav_usd']:.2f} | ì£¼ìì={latest['shares_outstanding']:,.0f}")
+        return latest
+    except Exception as e:
+        print(f"[XLS ì¤í¨] {e} â HTML fallback ì¬ì©")
+        return None
 
 
-def find_first(text, patterns):
-    for pat in patterns:
-        m = re.search(pat, text, re.I | re.S)
-        if m:
-            return to_float(m.group(1))
-    return np.nan
+# ââ HTMLìì basket/closing/premium ê°ì ¸ì¤ê¸° ââââââââââââââââââââââââââââââââââ
+def fetch_html_supplementary():
+    """HTML íì´ì§ìì XLSì ìë íë(basket_btc, closing_price, premium_discount) ì¶ì¶."""
+    text = fetch_page_text(URL, headers=HEADERS)
 
-
-# ── 오늘 데이터 스크래핑 ──────────────────────────────────────────────────────
-def fetch_page_text(url=URL):
-    r = requests.get(url, headers=HEADERS, timeout=30)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
-    parts = [soup.get_text(chr(10), strip=True)]
-    for s in soup.find_all("script"):
-        txt = s.string if s.string else s.get_text(" ", strip=True)
-        if txt:
-            parts.append(txt)
-    return chr(10).join(parts)
-
-
-def parse_snapshot(text):
     date_m = re.search(r"NAV as of\s+([A-Za-z]+ \d{1,2},\s*\d{4})", text, re.I)
     asof = (pd.to_datetime(date_m.group(1)).date().isoformat()
             if date_m else datetime.now(timezone.utc).date().isoformat())
 
-    nav            = find_first(text, [r"NAV as of.*?\n\s*\$([\d,]+(?:\.\d+)?)"])
-    net_assets     = find_first(text, [r"Net Assets of Fund\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"])
-    shares         = find_first(text, [r"Shares Outstanding\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"])
-    basket_usd     = find_first(text, [r"Basket Amount\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"])
-    basket_btc     = find_first(text, [r"(?:Indicative )?Basket Bitcoin Amount\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"])
-    closing_price  = find_first(text, [r"Closing Price\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"])
-    premium_disc   = find_first(text, [r"Premium/Discount\s*\nas of.*?\n\s*([-\d.]+)"])
+    data = {
+        "date":                 asof,
+        "net_assets_usd":       find_first(text, [r"Net Assets of Fund\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"]),
+        "basket_usd":           find_first(text, [r"Basket Amount\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"]),
+        "basket_btc":           find_first(text, [r"(?:Indicative )?Basket Bitcoin Amount\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"]),
+        "closing_price_usd":    find_first(text, [r"Closing Price\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"]),
+        "premium_discount_pct": find_first(text, [r"Premium/Discount\s*\nas of.*?\n\s*([-\d.]+)"]),
+        # HTML fallbackì© (XLS ì¤í¨ ì)
+        "nav_usd":              find_first(text, [r"NAV as of.*?\n\s*\$([\d,]+(?:\.\d+)?)"]),
+        "shares_outstanding":   find_first(text, [r"Shares Outstanding\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"]),
+    }
+    return data
+
+
+# ââ ì¤ëì· ì¡°ë¦½ ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+def build_snapshot():
+    """XLS(primary) + HTML(supplementary)ë¡ ì¤ë ì¤ëì· ìì±."""
+    xls_data = fetch_xls_latest()
+    html_data = fetch_html_supplementary()
+
+    # XLSê° primary â NAV, shares_outstanding ì°ì  ì¬ì©
+    if xls_data:
+        nav    = xls_data["nav_usd"]
+        shares = xls_data["shares_outstanding"]
+        asof   = xls_data["date"]
+    else:
+        nav    = html_data["nav_usd"]
+        shares = html_data["shares_outstanding"]
+        asof   = html_data["date"]
+
+    basket_usd = html_data["basket_usd"]
+    basket_btc = html_data["basket_btc"]
 
     btc_per_share = np.nan
     if not np.isnan(basket_btc) and not np.isnan(basket_usd) and not np.isnan(nav) and nav > 0:
@@ -82,41 +114,43 @@ def parse_snapshot(text):
     snap = {
         "date":                 asof,
         "obs_ts_utc":           datetime.now(timezone.utc).isoformat(),
-        "net_assets_usd":       net_assets,
+        "net_assets_usd":       html_data["net_assets_usd"],
         "nav_usd":              nav,
-        "closing_price_usd":    closing_price,
-        "premium_discount_pct": premium_disc,
+        "closing_price_usd":    html_data["closing_price_usd"],
+        "premium_discount_pct": html_data["premium_discount_pct"],
         "shares_outstanding":   shares,
         "basket_usd":           basket_usd,
         "basket_btc":           basket_btc,
         "btc_per_share":        btc_per_share,
         "management_fee_pct":   MGMT_FEE_PCT,
     }
-    missing = [f for f in ["net_assets_usd", "nav_usd", "shares_outstanding", "btc_per_share"]
-               if np.isnan(snap[f])]
+
+    # ë¬´ê²°ì± ê²ì¦
+    critical = ["nav_usd", "shares_outstanding", "btc_per_share"]
+    missing = [f for f in critical if np.isnan(snap[f])]
     if missing:
-        print(f"\n[경고] 웹사이트 구조 변경 의심. 파싱 실패: {', '.join(missing)}\n")
+        print(f"\n[ê²½ê³ ] íµì¬ ë°ì´í° ëë½: {', '.join(missing)}")
+        print("  ì¹ì¬ì´í¸ êµ¬ì¡° ë³ê²½ ìì¬ â CSV ìë°ì´í¸ ì¤íµ\n")
+        return None
+
     return snap
 
 
-# ── XLS 백필 (최초 1회) ───────────────────────────────────────────────────────
+# ââ XLS ë°±í (ìµì´ 1í) âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 def backfill_from_ishares_xls(current_btc_per_share: float):
     """
-    iShares 공식 XLS에서 역대 NAV + 주식수를 다운로드한 뒤,
-    현재 BTC/share 값에서 역산하여 과거 BTC/share와 BTC 보유량을 계산한다.
+    iShares ê³µì XLSìì ì­ë NAV + ì£¼ììë¥¼ ë¤ì´ë¡ëí ë¤,
+    íì¬ BTC/share ê°ìì ì­ì°íì¬ ê³¼ê±° BTC/shareì BTC ë³´ì ëì ê³ì°íë¤.
     """
-    print("[백필] iShares XLS 다운로드 중...", flush=True)
-    r = requests.get(XLS_URL, headers=HEADERS, timeout=30)
-    r.raise_for_status()
+    print("[ë°±í] iShares XLS ë¤ì´ë¡ë ì¤...", flush=True)
+    r = fetch_with_retry(XLS_URL, headers=HEADERS, timeout=30)
     cells = re.findall(r'<ss:Data[^>]*>([^<]+)</ss:Data>', r.text)
 
-    # 헤더("As Of") 위치 찾기
     header_idx = next((i for i, c in enumerate(cells) if c.strip() == "As Of"), None)
     if header_idx is None:
-        print("[백필 실패] XLS에서 데이터를 찾지 못했습니다.")
+        print("[ë°±í ì¤í¨] XLSìì ë°ì´í°ë¥¼ ì°¾ì§ ëª»íìµëë¤.")
         return pd.DataFrame()
 
-    # 4열씩 파싱: date, nav, ex-div(무시), shares
     rows = []
     i = header_idx + 4
     while i + 3 < len(cells):
@@ -130,12 +164,11 @@ def backfill_from_ishares_xls(current_btc_per_share: float):
             break
 
     if not rows:
-        print("[백필 실패] 파싱된 데이터 없음.")
+        print("[ë°±í ì¤í¨] íì±ë ë°ì´í° ìì.")
         return pd.DataFrame()
 
     df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
 
-    # BTC per share 역산: 현재 → 과거 (매일 fee 차감분 역으로 더함)
     ref_date = pd.Timestamp(datetime.now(timezone.utc).date())
     daily_factor = 1.0 + (MGMT_FEE_PCT / 100.0) / 365.0
 
@@ -145,19 +178,19 @@ def backfill_from_ishares_xls(current_btc_per_share: float):
 
     df["btc_per_share"]  = df["date"].apply(calc_btc_per_share)
     df["btc_in_trust"]   = df["shares_outstanding"] * df["btc_per_share"]
-    df["net_assets_usd"] = df["btc_in_trust"] * (df["nav_usd"] / df["btc_per_share"])  # = nav × shares
-    df["closing_price_usd"]    = df["nav_usd"]   # 시장가 데이터 없음 → NAV로 대체
+    df["net_assets_usd"] = df["btc_in_trust"] * (df["nav_usd"] / df["btc_per_share"])
+    df["closing_price_usd"]    = df["nav_usd"]
     df["premium_discount_pct"] = 0.0
     df["basket_usd"]           = np.nan
     df["basket_btc"]           = np.nan
     df["management_fee_pct"]   = MGMT_FEE_PCT
     df["obs_ts_utc"]           = "backfill"
 
-    print(f"[백필 완료] {len(df)}일치 데이터 ({df['date'].iloc[0]} ~ {df['date'].iloc[-1]})")
+    print(f"[ë°±í ìë£] {len(df)}ì¼ì¹ ë°ì´í° ({df['date'].iloc[0]} ~ {df['date'].iloc[-1]})")
     return df
 
 
-# ── 스냅샷 저장 ───────────────────────────────────────────────────────────────
+# ââ ì¤ëì· ì ì¥ âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 def save_snapshot(snapshot):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     new_df = pd.DataFrame([snapshot])
@@ -175,7 +208,7 @@ def save_snapshot(snapshot):
 
 
 def merge_and_save(backfill_df, live_snap):
-    """백필 DataFrame + 오늘 스냅샷을 병합해서 CSV 저장"""
+    """ë°±í DataFrame + ì¤ë ì¤ëì·ì ë³í©í´ì CSV ì ì¥"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     live_df = pd.DataFrame([live_snap])
     combined = pd.concat([backfill_df, live_df], ignore_index=True)
@@ -187,7 +220,7 @@ def merge_and_save(backfill_df, live_snap):
     return combined
 
 
-# ── 평단가 계산 ───────────────────────────────────────────────────────────────
+# ââ íë¨ê° ê³ì° âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 def build_cost_basis_track(df, seed_avg_cost=None):
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -201,7 +234,6 @@ def build_cost_basis_track(df, seed_avg_cost=None):
 
     df = df.sort_values("date").reset_index(drop=True)
 
-    # btc_in_trust 보정 (백필 행에 없을 수 있으므로)
     if "btc_in_trust" not in df.columns:
         df["btc_in_trust"] = np.nan
     df["btc_in_trust"] = pd.to_numeric(df["btc_in_trust"], errors="coerce")
@@ -285,17 +317,31 @@ def build_cost_basis_track(df, seed_avg_cost=None):
     return df
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
+# ââ main ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 def main():
-    # 1. 오늘 데이터 스크래핑
-    print("iShares IBIT 데이터 수집 중...", flush=True)
-    text     = fetch_page_text()
-    snapshot = parse_snapshot(text)
+    print("iShares IBIT ë°ì´í° ìì§ ì¤...", flush=True)
 
-    # BTC per share (오늘 기준, 백필 역산 기준점)
+    # 1. ì¤ë ì¤ëì· ìì± (XLS primary + HTML supplementary)
+    snapshot = build_snapshot()
+    if snapshot is None:
+        print("[ì¤ë¨] íµì¬ ë°ì´í° ëë½ì¼ë¡ CSV ìë°ì´í¸ ì¤íµ")
+        return
+
+    # 2. ì¤ë§í¸ ì¤íµ: ê°ì ë ì§ ë°ì´í°ê° ì´ë¯¸ ìì¼ë©´ track ì¬ê³ì°ë§
+    if SNAPSHOT_CSV.exists():
+        existing = pd.read_csv(SNAPSHOT_CSV)
+        if not existing.empty and existing["date"].iloc[-1] == snapshot["date"]:
+            print(f"[ì¤íµ] ë°ì´í° ë³ê²½ ìì ({snapshot['date']}) - ì¬ê³ì°ë§ ìí")
+            # obs_ts_utcë§ ìë°ì´í¸ (ê°ì ë ì§ì§ë§ ìµì  ê´ì¸¡)
+            snap_df = save_snapshot(snapshot)
+            track_df = build_cost_basis_track(snap_df, seed_avg_cost=SEED_AVG_COST)
+            _save_track(track_df)
+            return
+
+    # 3. BTC per share (ë°±í ì­ì° ê¸°ì¤ì )
     current_btc_per_share = snapshot.get("btc_per_share", np.nan)
 
-    # 2. 백필 필요 여부 판단 (CSV가 없거나 30일 미만이면 자동 백필)
+    # 4. ë°±í íì ì¬ë¶ íë¨ (CSVê° ìê±°ë 30ì¼ ë¯¸ë§ì´ë©´ ìë ë°±í)
     needs_backfill = True
     if SNAPSHOT_CSV.exists():
         existing = pd.read_csv(SNAPSHOT_CSV)
@@ -308,10 +354,15 @@ def main():
     else:
         snap_df = save_snapshot(snapshot)
 
-    # 3. 평단가 계산
+    # 5. íë¨ê° ê³ì°
     track_df = build_cost_basis_track(snap_df, seed_avg_cost=SEED_AVG_COST)
 
-    # 4. CSV 저장
+    # 6. CSV ì ì¥ + ê²°ê³¼ ì¶ë ¥
+    _save_track(track_df)
+    _print_report(track_df)
+
+
+def _save_track(track_df):
     out_cols = [
         "date", "btc_in_trust", "net_assets_usd", "implied_btc_px",
         "nav_usd", "closing_price_usd", "premium_discount_pct",
@@ -326,7 +377,8 @@ def main():
     existing_cols = [c for c in out_cols if c in track_df.columns]
     track_df[existing_cols].to_csv(TRACK_CSV, index=False)
 
-    # 5. 결과 출력
+
+def _print_report(track_df):
     latest   = track_df.iloc[-1]
     date_str = str(latest["date"].date())
     btc_px   = float(latest["implied_btc_px"])
@@ -335,36 +387,36 @@ def main():
     btc_held = float(latest["btc_in_trust"]) if pd.notna(latest.get("btc_in_trust", np.nan)) else 0.0
 
     print("\n" + "=" * 57)
-    print(f"  IBIT 평단가 추적 리포트 ({date_str})")
+    print(f"  IBIT íë¨ê° ì¶ì  ë¦¬í¬í¸ ({date_str})")
     print("=" * 57)
-    print(f"  현재 BTC 추정 시장가     : ${btc_px:>12,.2f}")
-    print(f"  펀드 순수 매수 평단가     : ${avg_buy:>12,.2f} (수수료 제외)")
-    print(f"  펀드 실질 평단가          : ${eff_cost:>12,.2f} (수수료 포함)")
-    print(f"  펀드 총 BTC 보유량        : {btc_held:>14,.2f} BTC")
+    print(f"  íì¬ BTC ì¶ì  ìì¥ê°     : ${btc_px:>12,.2f}")
+    print(f"  íë ìì ë§¤ì íë¨ê°     : ${avg_buy:>12,.2f} (ììë£ ì ì¸)")
+    print(f"  íë ì¤ì§ íë¨ê°          : ${eff_cost:>12,.2f} (ììë£ í¬í¨)")
+    print(f"  íë ì´ BTC ë³´ì ë        : {btc_held:>14,.2f} BTC")
     print("-" * 57)
 
     if avg_buy > 0:
         gap_pct   = (btc_px - avg_buy) / avg_buy * 100
         gap_sign  = "+" if gap_pct >= 0 else ""
-        gap_label = "프리미엄" if gap_pct >= 0 else "디스카운트"
-        print(f"  현재가 vs 평단가 괴리     : {gap_sign}{gap_pct:.2f}% ({gap_label})")
+        gap_label = "íë¦¬ë¯¸ì" if gap_pct >= 0 else "ëì¤ì¹´ì´í¸"
+        print(f"  íì¬ê° vs íë¨ê° ê´´ë¦¬     : {gap_sign}{gap_pct:.2f}% ({gap_label})")
 
     flow = float(latest["flow_btc_final"])
-    flow_label = "순매수" if flow >= 0 else "순매도"
-    print(f"  오늘 펀드 {flow_label}          : {abs(flow):>10,.2f} BTC")
-    print(f"  오늘 BTC 보유량 변화      : {float(latest['btc_delta']):>+10,.2f} BTC")
-    print(f"  오늘 수수료 소진 추정     : {-float(latest['est_fee_drain_btc']):>10,.2f} BTC")
+    flow_label = "ìë§¤ì" if flow >= 0 else "ìë§¤ë"
+    print(f"  ì¤ë íë {flow_label}          : {abs(flow):>10,.2f} BTC")
+    print(f"  ì¤ë BTC ë³´ì ë ë³í      : {float(latest['btc_delta']):>+10,.2f} BTC")
+    print(f"  ì¤ë ììë£ ìì§ ì¶ì      : {-float(latest['est_fee_drain_btc']):>10,.2f} BTC")
 
     if len(track_df) >= 2:
         recent     = track_df.tail(min(7, len(track_df)))
         cumul_flow = float(recent["flow_btc_final"].sum())
-        c_label    = "순매수" if cumul_flow >= 0 else "순매도"
-        print(f"  최근 {len(recent)}일 누적 {c_label}      : {abs(cumul_flow):>10,.2f} BTC")
+        c_label    = "ìë§¤ì" if cumul_flow >= 0 else "ìë§¤ë"
+        print(f"  ìµê·¼ {len(recent)}ì¼ ëì  {c_label}      : {abs(cumul_flow):>10,.2f} BTC")
 
     print("-" * 57)
-    print(f"  [정보] 추적 시작일        : {str(track_df.iloc[0]['date'].date())}")
-    print(f"  [정보] 총 데이터 일수     : {len(track_df)}일")
-    print(f"  [검증] 신뢰도 점수        : {float(latest['confidence_score_0_1']):.4f}")
+    print(f"  [ì ë³´] ì¶ì  ììì¼        : {str(track_df.iloc[0]['date'].date())}")
+    print(f"  [ì ë³´] ì´ ë°ì´í° ì¼ì     : {len(track_df)}ì¼")
+    print(f"  [ê²ì¦] ì ë¢°ë ì ì        : {float(latest['confidence_score_0_1']):.4f}")
     print("=" * 57 + "\n")
 
 
