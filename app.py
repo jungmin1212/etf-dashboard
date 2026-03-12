@@ -13,7 +13,6 @@ PERIOD_DAYS = {"30일": 30, "90일": 90, "120일": 120, "1년": 365}
 st.markdown("""
 <style>
 @media (max-width: 768px) {
-    /* 5열 메트릭 → 2열로 줄바꿈 */
     [data-testid="stHorizontalBlock"] {
         flex-wrap: wrap !important;
     }
@@ -21,11 +20,9 @@ st.markdown("""
         min-width: 47% !important;
         flex: 1 1 47% !important;
     }
-    /* 라디오 버튼 세로로 */
     [data-testid="stRadio"] > div {
         flex-direction: column !important;
     }
-    /* 폰트 크기 조금 줄이기 */
     [data-testid="metric-container"] {
         font-size: 0.85em;
     }
@@ -70,6 +67,24 @@ def get_crypto_prices() -> dict:
         pass
     return prices
 
+# ── 데이터 기준일 표시 헬퍼 ───────────────────────────────────
+def show_data_timestamp(df: pd.DataFrame):
+    if df.empty:
+        return
+    latest_date = df.iloc[-1]["date"].strftime("%Y-%m-%d")
+    obs_ts = str(df.iloc[-1].get("obs_ts_utc", ""))
+    if obs_ts and obs_ts != "backfill" and len(obs_ts) >= 16:
+        # UTC → KST 변환 (단순 +9시간)
+        try:
+            ts_utc = pd.to_datetime(obs_ts, utc=True)
+            ts_kst = ts_utc.tz_convert("Asia/Seoul")
+            collected = ts_kst.strftime("%Y-%m-%d %H:%M KST")
+        except Exception:
+            collected = obs_ts[:16] + " UTC"
+        st.caption(f"📅 데이터 기준: **{latest_date}** | 수집: {collected}")
+    else:
+        st.caption(f"📅 데이터 기준: **{latest_date}**")
+
 # ── Altair 자금 흐름 차트 ──────────────────────────────────────
 def flow_chart(df: pd.DataFrame, col: str, color_pos="#2ecc71", color_neg="#e74c3c"):
     chart = (
@@ -85,6 +100,7 @@ def flow_chart(df: pd.DataFrame, col: str, color_pos="#2ecc71", color_neg="#e74c
             ),
             tooltip=["date:T", f"{col}:Q"],
         )
+        .properties(width="container")
     )
     return chart
 
@@ -92,7 +108,7 @@ def flow_chart(df: pd.DataFrame, col: str, color_pos="#2ecc71", color_neg="#e74c
 st.title("ETF 추적 대시보드")
 st.markdown("블랙록(IBIT·ETHA)과 비트와이즈(BSOL) 추정 평단가와 자금 흐름을 추적합니다.")
 col_info1, col_info2 = st.columns(2)
-col_info1.info("📊 기관 데이터(평단가·보유량·자금흐름): 매일 오후 12시(KST) 자동 최신화")
+col_info1.info("📊 기관 데이터(평단가·보유량·자금흐름): 매일 오전 7시~오후 6시(KST) 자동 최신화")
 col_info2.success("⚡ 현재 시장가: Yahoo Finance 조회 · 5분마다 자동 갱신")
 
 # ── 탭 ────────────────────────────────────────────────────────
@@ -114,7 +130,6 @@ def ibit_live(df: pd.DataFrame) -> None:
     btc_held  = float(latest.get("btc_in_trust", 0) or 0)
     prev_held = float(prev.get("btc_in_trust", 0) or 0)
     flow_val  = float(latest["flow_btc_final"])
-    # T+1 결제 구조: 최신 행의 flow는 전 영업일 거래분 → 이전 행 날짜로 표기
     flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
     date_str  = flow_date.strftime("%m월 %d일")
 
@@ -123,6 +138,8 @@ def ibit_live(df: pd.DataFrame) -> None:
         gap_str = f"{gap_pct:+.2f}%"
     else:
         gap_str = "N/A"
+
+    show_data_timestamp(df)
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("현재 BTC 시장가",    px_str)
@@ -148,7 +165,7 @@ def ibit_live(df: pd.DataFrame) -> None:
 
     df_flow = df[df["date"] >= cutoff].reset_index(drop=True)
     st.subheader("기관 자금 흐름 (BTC)")
-    st.altair_chart(flow_chart(df_flow, "flow_btc_final"), use_container_width=True)
+    st.altair_chart(flow_chart(df_flow, "flow_btc_final"))
 
 with tab_ibit:
     st.header("IBIT (iShares Bitcoin Trust)")
@@ -183,6 +200,8 @@ def etha_live(df: pd.DataFrame) -> None:
     else:
         gap_str = "N/A"
 
+    show_data_timestamp(df)
+
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("현재 ETH 시장가",    px_str)
     _d = avg_cost - prev_cost
@@ -207,7 +226,7 @@ def etha_live(df: pd.DataFrame) -> None:
 
     df_flow = df[df["date"] >= cutoff].reset_index(drop=True)
     st.subheader("기관 자금 흐름 (ETH)")
-    st.altair_chart(flow_chart(df_flow, "flow_eth_final"), use_container_width=True)
+    st.altair_chart(flow_chart(df_flow, "flow_eth_final"))
 
 with tab_etha:
     st.header("ETHA (iShares Ethereum Trust)")
@@ -241,6 +260,8 @@ def bsol_live(df: pd.DataFrame) -> None:
         gap_str = f"{gap_pct:+.2f}%"
     else:
         gap_str = "N/A"
+
+    show_data_timestamp(df)
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("현재 SOL 시장가",    px_str)
@@ -278,7 +299,7 @@ def bsol_live(df: pd.DataFrame) -> None:
 
     df_flow = df[df["date"] >= cutoff].reset_index(drop=True)
     st.subheader("기관 자금 흐름 (SOL)")
-    st.altair_chart(flow_chart(df_flow, "flow_sol_final"), use_container_width=True)
+    st.altair_chart(flow_chart(df_flow, "flow_sol_final"))
 
 with tab_bsol:
     st.header("BSOL (Bitwise Solana Staking ETF)")
