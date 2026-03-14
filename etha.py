@@ -135,6 +135,7 @@ def build_snapshot():
 
 # ── XLS 백필 ──────────────────────────────────────────────────────────────────
 def backfill_from_ishares_xls(current_eth_per_share: float):
+    """다중 앵커 포인트 보간법으로 과거 ETH/share를 계산한다."""
     print("[백필] iShares ETHA XLS 다운로드 중...", flush=True)
     r = fetch_with_retry(XLS_URL, headers=HEADERS, timeout=30)
     cells = re.findall(r'<ss:Data[^>]*>([^<]+)</ss:Data>', r.text)
@@ -162,14 +163,44 @@ def backfill_from_ishares_xls(current_eth_per_share: float):
 
     df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
 
-    ref_date     = pd.Timestamp(datetime.now(timezone.utc).date())
     daily_factor = 1.0 + (MGMT_FEE_PCT / 100.0) / 365.0
 
-    def calc_eth_per_share(row_date):
-        days_back = (ref_date - pd.Timestamp(row_date)).days
-        return current_eth_per_share * (daily_factor ** days_back)
+    # 앵커 포인트 수집: 현재값 + 기존 실측 데이터
+    ref_date = pd.Timestamp(datetime.now(timezone.utc).date())
+    anchors = {ref_date.isoformat()[:10]: current_eth_per_share}
 
-    df["eth_per_share"]        = df["date"].apply(calc_eth_per_share)
+    if SNAPSHOT_CSV.exists():
+        existing = pd.read_csv(SNAPSHOT_CSV)
+        live = existing[existing["obs_ts_utc"] != "backfill"]
+        if not live.empty and "eth_per_share" in live.columns:
+            for _, row in live.iterrows():
+                eps = pd.to_numeric(row.get("eth_per_share"), errors="coerce")
+                if pd.notna(eps) and eps > 0:
+                    anchors[str(row["date"])[:10]] = float(eps)
+
+    anchor_dates = sorted(anchors.keys())
+    print(f"[백필] 앵커 포인트 {len(anchor_dates)}개 사용")
+
+    def calc_eth_per_share_multi_anchor(row_date):
+        d = str(row_date)[:10]
+        if d in anchors:
+            return anchors[d], 0
+        best_anchor_date = None
+        best_dist = float("inf")
+        for ad in anchor_dates:
+            dist = abs((pd.Timestamp(d) - pd.Timestamp(ad)).days)
+            if dist < best_dist:
+                best_dist = dist
+                best_anchor_date = ad
+        anchor_eps = anchors[best_anchor_date]
+        days_diff = (pd.Timestamp(best_anchor_date) - pd.Timestamp(d)).days
+        eps = anchor_eps * (daily_factor ** days_diff)
+        return eps, best_dist
+
+    results = df["date"].apply(calc_eth_per_share_multi_anchor)
+    df["eth_per_share"] = results.apply(lambda x: x[0])
+    df["backfill_quality"] = results.apply(lambda x: x[1])
+
     df["eth_in_trust"]         = df["shares_outstanding"] * df["eth_per_share"]
     df["net_assets_usd"]       = df["eth_in_trust"] * (df["nav_usd"] / df["eth_per_share"])
     df["closing_price_usd"]    = df["nav_usd"]
@@ -255,8 +286,14 @@ def build_cost_basis_track(df, seed_avg_cost=None):
     )
     df["flow_eth_from_holdings"] = df["eth_delta"] + df["est_fee_drain_eth"]
 
+    # 교차 검증: 두 흐름 추정 방법의 합의도
+    flow_agreement = 1.0 - (abs(df["flow_eth_from_shares"] - df["flow_eth_from_holdings"]) /
+                            (abs(df["flow_eth_from_shares"]) + abs(df["flow_eth_from_holdings"]) + 1e-12))
+    df["flow_method_agreement"] = np.clip(flow_agreement, 0.0, 1.0)
+
     premium_abs = df["premium_discount_pct"].abs()
-    w_shares    = np.clip(1.0 - premium_abs / 1.0, 0.25, 1.0)
+    w_shares    = np.clip(1.0 - premium_abs / 2.0, 0.25, 1.0)
+    df["w_shares"] = w_shares
     df["flow_eth_final"] = (w_shares * df["flow_eth_from_shares"]
                             + (1.0 - w_shares) * df["flow_eth_from_holdings"])
 
@@ -289,7 +326,8 @@ def build_cost_basis_track(df, seed_avg_cost=None):
         resid = abs(row["eth_delta"] - (row["flow_eth_final"] - row["est_fee_drain_eth"]))
         denom = max(abs(row["eth_delta"]), 1e-12)
         conf  = 0.0 if i == 0 else max(0.0, min(1.0,
-                    1.0 - resid / denom - abs(row["premium_discount_pct"]) / 5.0))
+                    1.0 - resid / denom - abs(row["premium_discount_pct"]) / 20.0
+                    - (1.0 - row["flow_method_agreement"]) * 0.3))
 
         cost_basis_usd.append(cb)
         avg_buy_ex.append(cb / inv if inv > 1e-12 else np.nan)
@@ -297,6 +335,8 @@ def build_cost_basis_track(df, seed_avg_cost=None):
         inv_list.append(inv)
         conf_list.append(conf)
 
+    df["flow_usd_final"]                 = df["flow_eth_final"] * df["implied_eth_px"]
+    df["cumulative_flow_usd"]            = df["flow_usd_final"].cumsum()
     df["cost_basis_usd"]                 = cost_basis_usd
     df["avg_buy_price_ex_fee"]           = avg_buy_ex
     df["effective_cost_per_current_eth"] = eff_cost_list
@@ -355,7 +395,8 @@ def _save_track(track_df):
         "date", "eth_in_trust", "net_assets_usd", "implied_eth_px",
         "nav_usd", "closing_price_usd", "premium_discount_pct",
         "shares_outstanding", "share_delta", "eth_delta",
-        "management_fee_pct", "est_fee_drain_eth", "flow_eth_final",
+        "management_fee_pct", "est_fee_drain_eth", "w_shares", "flow_method_agreement", "flow_eth_final",
+        "flow_usd_final", "cumulative_flow_usd",
         "eth_inventory", "cost_basis_usd",
         "avg_buy_price_ex_fee", "effective_cost_per_current_eth",
         "confidence_score_0_1",
