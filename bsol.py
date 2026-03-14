@@ -237,8 +237,14 @@ def build_cost_basis_track(df, seed_avg_cost=None):
 
     df["flow_sol_from_holdings"] = df["sol_delta"] - df["est_net_reward_sol"]
 
+    # 교차 검증: 두 흐름 추정 방법의 합의도
+    flow_agreement = 1.0 - (abs(df["flow_sol_from_shares"] - df["flow_sol_from_holdings"]) /
+                            (abs(df["flow_sol_from_shares"]) + abs(df["flow_sol_from_holdings"]) + 1e-12))
+    df["flow_method_agreement"] = np.clip(flow_agreement, 0.0, 1.0)
+
     premium_abs = df["premium_discount_pct"].abs()
-    w_shares = np.clip(1.0 - premium_abs / 1.0, 0.25, 1.0)
+    w_shares = np.clip(1.0 - premium_abs / 2.0, 0.25, 1.0)
+    df["w_shares"] = w_shares
     df["flow_sol_final"] = w_shares * df["flow_sol_from_shares"] + (1.0 - w_shares) * df["flow_sol_from_holdings"]
 
     if not df.empty:
@@ -279,7 +285,9 @@ def build_cost_basis_track(df, seed_avg_cost=None):
 
         resid = abs(row["sol_delta"] - (row["est_net_reward_sol"] + row["flow_sol_final"]))
         denom = max(abs(row["sol_delta"]), 1e-8)
-        conf = 0.0 if i == 0 else max(0.0, min(1.0, 1.0 - resid / denom - abs(row["premium_discount_pct"]) / 5.0))
+        conf = 0.0 if i == 0 else max(0.0, min(1.0,
+                    1.0 - resid / denom - abs(row["premium_discount_pct"]) / 20.0
+                    - (1.0 - row["flow_method_agreement"]) * 0.3))
 
         cost_basis_usd.append(cb_usd)
         avg_buy_ex_staking.append(cb_usd / inv_non_staking if inv_non_staking > 1e-12 else np.nan)
@@ -288,6 +296,8 @@ def build_cost_basis_track(df, seed_avg_cost=None):
         cumulative_est_staking_sol.append(est_staking_cum)
         confidence_score.append(conf)
 
+    df["flow_usd_final"] = df["flow_sol_final"] * df["implied_sol_px"]
+    df["cumulative_flow_usd"] = df["flow_usd_final"].cumsum()
     df["cost_basis_usd"] = cost_basis_usd
     df["avg_buy_price_ex_staking"] = avg_buy_ex_staking
     df["effective_cost_per_current_sol"] = effective_cost_per_current_sol
@@ -355,7 +365,11 @@ def _save_track(track_df):
         "net_staking_reward_rate_pct",
         "sponsor_fee_pct",
         "est_net_reward_sol",
+        "w_shares",
+        "flow_method_agreement",
         "flow_sol_final",
+        "flow_usd_final",
+        "cumulative_flow_usd",
         "non_staking_inventory_sol",
         "cumulative_est_staking_sol",
         "cost_basis_usd",
