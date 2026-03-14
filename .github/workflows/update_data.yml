@@ -11,15 +11,15 @@ jobs:
 
     steps:
       - name: 레포 체크아웃
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Python 설정
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
 
       - name: 패키지 설치
-        run: pip install requests pandas beautifulsoup4 openpyxl lxml yfinance
+        run: pip install -r requirements.txt
 
       - name: 데이터 수집 엔진 가동 (BSOL, IBIT, ETHA)
         run: |
