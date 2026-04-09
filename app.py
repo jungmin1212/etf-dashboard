@@ -231,14 +231,14 @@ def show_confidence_explainer(df: pd.DataFrame):
 
 # ── 헤더 ──────────────────────────────────────────────────────
 st.title("ETF 추적 대시보드")
-st.markdown("블랙록(IBIT/ETHA)과 비트와이즈(BSOL) 추정 평단가와 자금 흐름을 추적합니다.")
+st.markdown("블랙록(IBIT/ETHA/ETHB)과 비트와이즈(BSOL) 추정 평단가와 자금 흐름을 추적합니다.")
 col_info1, col_info2 = st.columns(2)
-col_info1.info("기관 데이터(평단가/보유량/자금흐름): 매일 오전 7시~오후 6시(KST) 자동 최신화")
+col_info1.info("기관 데이터(평단가/보유량/자금흐름): 매 3시간마다 자동 최신화")
 col_info2.success("현재 시장가: Yahoo Finance 조회 / 5분마다 자동 갱신")
 
 # ── 탭 ────────────────────────────────────────────────────────
-tab_ibit, tab_etha, tab_bsol, tab_cross = st.tabs(
-    ["비트코인 (IBIT)", "이더리움 (ETHA)", "솔라나 (BSOL)", "크로스 ETF 분석"]
+tab_ibit, tab_etha, tab_ethb, tab_bsol, tab_cross = st.tabs(
+    ["비트코인 (IBIT)", "이더리움 (ETHA)", "이더리움 스테이킹 (ETHB)", "솔라나 (BSOL)", "크로스 ETF 분석"]
 )
 
 # ══════════════════════════════════════════════════════════════
@@ -394,6 +394,75 @@ with tab_etha:
         st.warning("ETHA 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
 
 # ══════════════════════════════════════════════════════════════
+# ETHB 탭
+# ══════════════════════════════════════════════════════════════
+@st.fragment(run_every=300)
+def ethb_live(df: pd.DataFrame) -> None:
+    eth_px = get_crypto_prices()["ETH"]
+    px_str = f"${eth_px:,.2f}" if eth_px else "N/A"
+
+    has_prev  = len(df) >= 2
+    latest    = df.iloc[-1]
+    prev      = df.iloc[-2] if has_prev else latest
+    avg_cost  = float(latest["avg_buy_price_ex_fee"])
+    prev_cost = float(prev["avg_buy_price_ex_fee"])
+    eth_held  = float(latest.get("eth_in_trust", 0) or 0)
+    prev_held = float(prev.get("eth_in_trust", 0) or 0)
+    flow_val  = float(latest["flow_eth_final"])
+    flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
+    date_str  = flow_date.strftime("%m월 %d일")
+
+    if eth_px and avg_cost > 0:
+        gap_pct = (eth_px - avg_cost) / avg_cost * 100
+        gap_str = f"{gap_pct:+.2f}%"
+    else:
+        gap_str = "N/A"
+
+    show_data_timestamp(df)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("현재 ETH 시장가",    px_str)
+    _d = avg_cost - prev_cost
+    c2.metric("기관 순수 평단가",    f"${avg_cost:,.2f}",
+              delta=f"{'+' if _d >= 0 else '-'}${abs(_d):,.2f}" if has_prev else None)
+    c3.metric("평단가 대비 괴리율",  gap_str)
+    c4.metric(f"{date_str} 순매수", f"{flow_val:,.4f} ETH")
+    c5.metric("추정 ETH 보유량",    f"{eth_held:,.2f} ETH",
+              delta=f"{eth_held - prev_held:+,.2f} ETH" if has_prev else None)
+
+    show_momentum_metrics(df)
+
+    period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="ethb_period")
+    cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
+
+    show_support_resistance(df, "implied_eth_px", "avg_buy_price_ex_fee", cutoff)
+
+    df_chart = df[["date", "implied_eth_px", "avg_buy_price_ex_fee"]].copy()
+    df_chart["MA20"]  = df_chart["implied_eth_px"].rolling(20).mean()
+    df_chart["MA200"] = df_chart["implied_eth_px"].rolling(200).mean()
+    df_f = df_chart[df_chart["date"] >= cutoff].set_index("date")
+    df_f.columns = ["시장가", "기관 평단가", "MA20", "MA200"]
+
+    st.subheader("평단가 vs 현재가 추세")
+    st.line_chart(df_f, color=["#FFFFFF", "#00CED1", "#00BFFF", "#FF6B6B"])
+
+    df_flow = df[df["date"] >= cutoff].reset_index(drop=True)
+    st.subheader("기관 자금 흐름 (ETH)")
+    st.altair_chart(flow_chart(df_flow, "flow_eth_final"))
+
+    show_premium_trend(df, cutoff)
+    show_divergence_signal(df, "implied_eth_px", cutoff)
+    show_confidence_explainer(df)
+
+with tab_ethb:
+    st.header("ETHB (iShares Staked Ethereum Trust)")
+    df_ethb = load_data("ethb_tracker/ethb_cost_basis_track.csv")
+    if not df_ethb.empty:
+        ethb_live(df_ethb)
+    else:
+        st.warning("ETHB 데이터가 없습니다. 스크립트를 먼저 실행해 주세요.")
+
+# ══════════════════════════════════════════════════════════════
 # BSOL 탭
 # ══════════════════════════════════════════════════════════════
 @st.fragment(run_every=300)
@@ -492,12 +561,13 @@ with tab_cross:
     df_etha_c = load_data("etha_tracker/etha_cost_basis_track.csv")
     df_bsol_c = load_data("bsol_tracker/bsol_cost_basis_track.csv")
 
-    has_flow = all(
-        not d.empty and "flow_usd_final" in d.columns
+    has_data = all(not d.empty for d in [df_ibit_c, df_etha_c, df_bsol_c])
+    has_flow = has_data and all(
+        "flow_usd_final" in d.columns
         for d in [df_ibit_c, df_etha_c, df_bsol_c]
     )
 
-    if has_flow:
+    if has_data:
         period_cross = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="cross_period")
         cutoff_cross = pd.Timestamp.now() - pd.Timedelta(days=PERIOD_DAYS[period_cross])
 
