@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from utils import to_float, find_first, fetch_with_retry, fetch_page_text, HEADERS
+from utils import fetch_with_retry, fetch_ishares_datapoints, dp_float, HEADERS
 
 URL          = "https://www.ishares.com/us/products/348532/ishares-staked-ethereum-trust-etf"
 XLS_URL      = ("https://www.ishares.com/us/products/348532/fund/"
@@ -23,86 +23,29 @@ MGMT_FEE_PCT = 0.12
 SEED_AVG_COST = None
 
 
-# ── XLS에서 최신 NAV/주식수 가져오기 (Primary 소스) ────────────────────────────
-def fetch_xls_latest():
-    """iShares 공식 XLS에서 최신 행의 date, nav_usd, shares_outstanding 추출."""
-    try:
-        print("[XLS] iShares ETHB XLS 다운로드 중...", flush=True)
-        r = fetch_with_retry(XLS_URL, headers=HEADERS, timeout=30)
-        cells = re.findall(r'<ss:Data[^>]*>([^<]+)</ss:Data>', r.text)
-
-        header_idx = next((i for i, c in enumerate(cells) if c.strip() == "As Of"), None)
-        if header_idx is None:
-            print("[XLS] 헤더를 찾지 못함 — HTML fallback")
-            return None
-
-        # XLS는 최신→과거 순 정렬 → 모든 행 파싱 후 최대 날짜 선택
-        rows = []
-        i = header_idx + 4
-        while i + 3 < len(cells):
-            try:
-                d   = pd.to_datetime(cells[i].strip()).date().isoformat()
-                nav = float(cells[i + 1].strip().replace(",", ""))
-                shr = float(cells[i + 3].strip().replace(",", ""))
-                rows.append({"date": d, "nav_usd": nav, "shares_outstanding": shr})
-                i += 4
-            except Exception:
-                break
-
-        if not rows:
-            return None
-
-        latest = max(rows, key=lambda r: r["date"])
-        print(f"[XLS] 최신 데이터: {latest['date']} | NAV=${latest['nav_usd']:.2f} | 주식수={latest['shares_outstanding']:,.0f}")
-        return latest
-    except Exception as e:
-        print(f"[XLS 실패] {e} — HTML fallback 사용")
+# ── 상품 페이지 임베드 JSON에서 스냅샷 조립 (Primary 소스) ─────────────────────
+# iShares가 사이트를 신규(Astro 기반) 프론트엔드로 교체하면서 XLS 다운로드
+# 엔드포인트가 더 이상 XLS를 반환하지 않고(HTML 페이지로 대체), 기존 HTML 텍스트
+# 정규식도 깨졌다. 페이지에 임베드된 dataPoints/fundNav JSON을 직접 파싱한다.
+def build_snapshot():
+    """iShares 페이지에 임베드된 JSON에서 오늘 스냅샷 생성."""
+    points = fetch_ishares_datapoints(URL, headers=HEADERS)
+    if not points:
+        print("[경고] 페이지 데이터 포인트를 찾지 못함 — 웹사이트 구조 변경 의심")
         return None
 
+    nav_entry = points.get("navAmount")
+    asof_str = nav_entry.get("formattedAsOfDate") if nav_entry else None
+    asof = (pd.to_datetime(asof_str).date().isoformat()
+            if asof_str else datetime.now(timezone.utc).date().isoformat())
 
-# ── HTML에서 basket/closing/premium 가져오기 ──────────────────────────────────
-def fetch_html_supplementary():
-    """HTML 페이지에서 XLS에 없는 필드 추출."""
-    text = fetch_page_text(URL, headers=HEADERS)
-
-    date_m = re.search(r"NAV as of\s+([A-Za-z]+ \d{1,2},\s*\d{4})", text, re.I)
-    asof = (pd.to_datetime(date_m.group(1)).date().isoformat()
-            if date_m else datetime.now(timezone.utc).date().isoformat())
-
-    data = {
-        "date":                 asof,
-        "net_assets_usd":       find_first(text, [r"Net Assets of Fund\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"]),
-        "basket_usd":           find_first(text, [r"Basket Amount\s*\nas of.*?\n\s*\$([\d,]+(?:\.\d+)?)"]),
-        "basket_eth":           find_first(text, [
-                                    r"(?:Indicative )?Basket Ether(?:eum)? Amount\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)",
-                                    r"Basket Ether(?:eum)? Amount\s+as of.*?\n\s*([\d,]+(?:\.\d+)?)",
-                                ]),
-        "closing_price_usd":    find_first(text, [r"Closing Price\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"]),
-        "premium_discount_pct": find_first(text, [r"Premium/Discount\s*\nas of.*?\n\s*([-\d.]+)"]),
-        # HTML fallback용
-        "nav_usd":              find_first(text, [r"NAV as of.*?\n\s*\$([\d,]+(?:\.\d+)?)"]),
-        "shares_outstanding":   find_first(text, [r"Shares Outstanding\s*\nas of.*?\n\s*([\d,]+(?:\.\d+)?)"]),
-    }
-    return data
-
-
-# ── 스냅샷 조립 ──────────────────────────────────────────────────────────────
-def build_snapshot():
-    """XLS(primary) + HTML(supplementary)로 오늘 스냅샷 생성."""
-    xls_data  = fetch_xls_latest()
-    html_data = fetch_html_supplementary()
-
-    if xls_data:
-        nav    = xls_data["nav_usd"]
-        shares = xls_data["shares_outstanding"]
-        asof   = xls_data["date"]
-    else:
-        nav    = html_data["nav_usd"]
-        shares = html_data["shares_outstanding"]
-        asof   = html_data["date"]
-
-    basket_usd = html_data["basket_usd"]
-    basket_eth = html_data["basket_eth"]
+    nav        = dp_float(points, "navAmount")
+    shares     = dp_float(points, "sharesOutstanding")
+    net_assets = dp_float(points, "totalNetAssetsFundLevel")
+    basket_usd = dp_float(points, "BasketBitcoinAmount")
+    basket_eth = dp_float(points, "basketAmt")
+    closing    = dp_float(points, "closingPrice")
+    prem_disc  = dp_float(points, "premiumDiscountClosingPriceNavPercent")
 
     eth_per_share = np.nan
     if not np.isnan(basket_eth) and not np.isnan(basket_usd) and not np.isnan(nav) and nav > 0:
@@ -113,10 +56,10 @@ def build_snapshot():
     snap = {
         "date":                 asof,
         "obs_ts_utc":           datetime.now(timezone.utc).isoformat(),
-        "net_assets_usd":       html_data["net_assets_usd"],
+        "net_assets_usd":       net_assets,
         "nav_usd":              nav,
-        "closing_price_usd":    html_data["closing_price_usd"],
-        "premium_discount_pct": html_data["premium_discount_pct"],
+        "closing_price_usd":    closing,
+        "premium_discount_pct": prem_disc,
         "shares_outstanding":   shares,
         "basket_usd":           basket_usd,
         "basket_eth":           basket_eth,

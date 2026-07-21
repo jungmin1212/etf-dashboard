@@ -1,5 +1,6 @@
 # utils.py — ETF 스크래퍼 공유 유틸리티
 
+import json
 import re
 import time
 
@@ -61,3 +62,85 @@ def fetch_page_text(url, headers=None):
         if txt:
             parts.append(txt)
     return chr(10).join(parts)
+
+
+def _extract_balanced_json(s, brace_idx):
+    """s[brace_idx]가 '{' 라고 가정하고, 균형 잡힌 JSON 객체 문자열을 잘라서 반환."""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(brace_idx, len(s)):
+        c = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        else:
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    return s[brace_idx:i + 1]
+    return None
+
+
+def fetch_ishares_datapoints(url, headers=None):
+    """
+    iShares 신규(Astro 기반) 상품 페이지에 임베드된 데이터 포인트 JSON을 추출.
+
+    페이지 마크업이 HTML 엔티티로 인코딩된 JSON 블롭(&quot; 등)을 포함하고 있어
+    가시 텍스트 정규식이 아니라 이 JSON을 직접 파싱하는 편이 훨씬 안정적이다.
+    "dataPoints"(키 지표 카드)와 fundHeader.fundNav의 "dataPointsByNameMap"
+    (NAV 등, raw value 포함) 두 블록을 병합해 {name: {formattedValue, value, formattedAsOfDate}} 로 반환.
+    """
+    r = fetch_with_retry(url, headers=headers)
+    html = (r.text.replace("&quot;", '"')
+                  .replace("&#x27;", "'")
+                  .replace("&amp;", "&"))
+
+    points = {}
+
+    dp_idx = html.find('"dataPoints":{')
+    if dp_idx != -1:
+        block = _extract_balanced_json(html, dp_idx + len('"dataPoints":'))
+        if block:
+            try:
+                obj = json.loads(block)
+                for key, v in obj.items():
+                    if isinstance(v, dict) and "formattedValue" in v:
+                        points[key] = v
+            except json.JSONDecodeError:
+                pass
+
+    nav_idx = html.find('"fundNav":{')
+    if nav_idx != -1:
+        map_idx = html.find('"dataPointsByNameMap":{', nav_idx)
+        if map_idx != -1:
+            block = _extract_balanced_json(html, map_idx + len('"dataPointsByNameMap":'))
+            if block:
+                try:
+                    obj = json.loads(block)
+                    for key, v in obj.items():
+                        if isinstance(v, dict) and "formattedValue" in v:
+                            points[key] = v
+                except json.JSONDecodeError:
+                    pass
+
+    return points
+
+
+def dp_float(points, key):
+    """fetch_ishares_datapoints() 결과에서 key 값을 float로 추출 (raw value 우선)."""
+    entry = points.get(key)
+    if not entry:
+        return np.nan
+    v = entry.get("value")
+    if isinstance(v, (int, float)):
+        return float(v)
+    return to_float(entry.get("formattedValue"))
