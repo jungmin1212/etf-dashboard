@@ -8,7 +8,8 @@ from datetime import datetime, timezone, date as date_type
 import numpy as np
 import pandas as pd
 
-from utils import fetch_with_retry, fetch_ishares_datapoints, dp_float, HEADERS
+from utils import (fetch_with_retry, fetch_ishares_datapoints, dp_float,
+                    backfill_gap_with_farside, HEADERS)
 
 URL          = "https://www.ishares.com/us/products/333011/blackrock-bitcoin-etf"
 XLS_URL      = ("https://www.ishares.com/us/products/333011/fund/"
@@ -313,37 +314,46 @@ def main():
         print("[중단] 핵심 데이터 누락으로 CSV 업데이트 스킵")
         return
 
-    # 2. 스마트 스킵: 같은 날짜 데이터가 이미 있으면 track 재계산만
-    if SNAPSHOT_CSV.exists():
-        existing = pd.read_csv(SNAPSHOT_CSV)
-        if not existing.empty and existing["date"].iloc[-1] == snapshot["date"]:
-            print(f"[스킵] 데이터 변경 없음 ({snapshot['date']}) - 재계산만 수행")
-            # obs_ts_utc만 업데이트 (같은 날짜지만 최신 관측)
-            snap_df = save_snapshot(snapshot)
-            track_df = build_cost_basis_track(snap_df, seed_avg_cost=SEED_AVG_COST)
-            _save_track(track_df)
-            return
+    existing = pd.read_csv(SNAPSHOT_CSV) if SNAPSHOT_CSV.exists() else pd.DataFrame()
 
-    # 3. BTC per share (백필 역산 기준점)
+    # 2. 스마트 스킵: 같은 날짜 데이터가 이미 있으면 track 재계산만
+    if not existing.empty and existing["date"].iloc[-1] == snapshot["date"]:
+        print(f"[스킵] 데이터 변경 없음 ({snapshot['date']}) - 재계산만 수행")
+        # obs_ts_utc만 업데이트 (같은 날짜지만 최신 관측)
+        snap_df = save_snapshot(snapshot)
+        track_df = build_cost_basis_track(snap_df, seed_avg_cost=SEED_AVG_COST)
+        _save_track(track_df)
+        return
+
+    # 3. 수집 공백(여러 날) 감지 → Farside 실측 순유입으로 근사 복원
+    gap_df = None
+    if not existing.empty:
+        gap_df = backfill_gap_with_farside(
+            existing, snapshot, asset="bitcoin", ticker="IBIT",
+            coin_per_share_col="btc_per_share", basket_col="basket_btc",
+            yf_symbol="BTC-USD", mgmt_fee_pct=MGMT_FEE_PCT, headers=HEADERS,
+        )
+
+    # 4. BTC per share (초기 백필 역산 기준점)
     current_btc_per_share = snapshot.get("btc_per_share", np.nan)
 
-    # 4. 백필 필요 여부 판단 (CSV가 없거나 30일 미만이면 자동 백필)
-    needs_backfill = True
-    if SNAPSHOT_CSV.exists():
-        existing = pd.read_csv(SNAPSHOT_CSV)
-        if len(existing) >= 30:
-            needs_backfill = False
+    # 5. 초기 백필 필요 여부 판단 (CSV가 없거나 30일 미만이면 자동 백필)
+    needs_backfill = existing.empty or len(existing) < 30
 
     if needs_backfill and not np.isnan(current_btc_per_share):
         backfill_df = backfill_from_ishares_xls(current_btc_per_share)
-        snap_df     = merge_and_save(backfill_df, snapshot)
+        backfill_df = pd.concat([backfill_df, existing, gap_df], ignore_index=True) if gap_df is not None \
+            else pd.concat([backfill_df, existing], ignore_index=True)
+        snap_df = merge_and_save(backfill_df, snapshot)
+    elif gap_df is not None:
+        snap_df = merge_and_save(pd.concat([existing, gap_df], ignore_index=True), snapshot)
     else:
         snap_df = save_snapshot(snapshot)
 
-    # 5. 평단가 계산
+    # 6. 평단가 계산
     track_df = build_cost_basis_track(snap_df, seed_avg_cost=SEED_AVG_COST)
 
-    # 6. CSV 저장 + 결과 출력
+    # 7. CSV 저장 + 결과 출력
     _save_track(track_df)
     _print_report(track_df)
 

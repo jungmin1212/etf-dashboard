@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from utils import fetch_with_retry, fetch_ishares_datapoints, dp_float, HEADERS
+from utils import (fetch_with_retry, fetch_ishares_datapoints, dp_float,
+                    backfill_gap_with_farside, HEADERS)
 
 URL          = "https://www.ishares.com/us/products/348532/ishares-staked-ethereum-trust-etf"
 XLS_URL      = ("https://www.ishares.com/us/products/348532/fund/"
@@ -304,26 +305,35 @@ def main():
         print("[중단] 핵심 데이터 누락으로 CSV 업데이트 스킵")
         return
 
-    if SNAPSHOT_CSV.exists():
-        existing = pd.read_csv(SNAPSHOT_CSV)
-        if not existing.empty and existing["date"].iloc[-1] == snapshot["date"]:
-            print(f"[스킵] 데이터 변경 없음 ({snapshot['date']}) - 재계산만 수행")
-            snap_df  = save_snapshot(snapshot)
-            track_df = build_cost_basis_track(snap_df, seed_avg_cost=SEED_AVG_COST)
-            _save_track(track_df)
-            return
+    existing = pd.read_csv(SNAPSHOT_CSV) if SNAPSHOT_CSV.exists() else pd.DataFrame()
+
+    if not existing.empty and existing["date"].iloc[-1] == snapshot["date"]:
+        print(f"[스킵] 데이터 변경 없음 ({snapshot['date']}) - 재계산만 수행")
+        snap_df  = save_snapshot(snapshot)
+        track_df = build_cost_basis_track(snap_df, seed_avg_cost=SEED_AVG_COST)
+        _save_track(track_df)
+        return
+
+    # 수집 공백(여러 날) 감지 → Farside 실측 순유입으로 근사 복원
+    gap_df = None
+    if not existing.empty:
+        gap_df = backfill_gap_with_farside(
+            existing, snapshot, asset="ethereum", ticker="ETHB",
+            coin_per_share_col="eth_per_share", basket_col="basket_eth",
+            yf_symbol="ETH-USD", mgmt_fee_pct=MGMT_FEE_PCT, headers=HEADERS,
+        )
 
     current_eth_per_share = snapshot.get("eth_per_share", np.nan)
 
-    needs_backfill = True
-    if SNAPSHOT_CSV.exists():
-        existing = pd.read_csv(SNAPSHOT_CSV)
-        if len(existing) >= 30:
-            needs_backfill = False
+    needs_backfill = existing.empty or len(existing) < 30
 
     if needs_backfill and not np.isnan(current_eth_per_share):
         backfill_df = backfill_from_ishares_xls(current_eth_per_share)
-        snap_df     = merge_and_save(backfill_df, snapshot)
+        backfill_df = pd.concat([backfill_df, existing, gap_df], ignore_index=True) if gap_df is not None \
+            else pd.concat([backfill_df, existing], ignore_index=True)
+        snap_df = merge_and_save(backfill_df, snapshot)
+    elif gap_df is not None:
+        snap_df = merge_and_save(pd.concat([existing, gap_df], ignore_index=True), snapshot)
     else:
         snap_df = save_snapshot(snapshot)
 
