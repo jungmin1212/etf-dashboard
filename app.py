@@ -103,46 +103,57 @@ def flow_chart(df: pd.DataFrame, col: str, color_pos="#2ecc71", color_neg="#e74c
     )
     return chart
 
-# ── 모멘텀 지표 헬퍼 (P2-1) ──────────────────────────────────
-def show_momentum_metrics(df: pd.DataFrame):
-    """7일/30일 평균 순유입(USD)과 유입 가속도를 표시한다."""
-    if "flow_usd_final" not in df.columns or len(df) < 7:
+# ── 유동성 지표 (거래량 / 매수매도 스프레드) ──────────────────
+def show_liquidity_metrics(df: pd.DataFrame):
+    """일일 거래량, 30일 평균 거래량, 매수매도 스프레드를 표시한다."""
+    cols = ["daily_volume", "avg_30d_volume", "bid_ask_spread_pct"]
+    if not any(c in df.columns for c in cols):
         return
-    flow_7d = df["flow_usd_final"].rolling(7, min_periods=1).mean()
-    flow_30d = df["flow_usd_final"].rolling(30, min_periods=1).mean()
-    flow_accel = flow_7d - flow_7d.shift(7)
-
-    latest_7d = float(flow_7d.iloc[-1])
-    latest_30d = float(flow_30d.iloc[-1])
-    latest_accel = float(flow_accel.iloc[-1]) if pd.notna(flow_accel.iloc[-1]) else 0.0
-
-    m1, m2, m3 = st.columns(3)
-    m1.metric("7일 평균 순유입 (USD)", f"${latest_7d:,.0f}")
-    m2.metric("30일 평균 순유입 (USD)", f"${latest_30d:,.0f}")
-    m3.metric("유입 가속도", f"${latest_accel:,.0f}",
-              delta="가속" if latest_accel > 0 else "감속")
-
-# ── 프리미엄/디스카운트 추세 차트 (P2-2) ──────────────────────
-def show_premium_trend(df: pd.DataFrame, cutoff):
-    """프리미엄/디스카운트 일별 + 7일 이동평균 차트."""
-    if "premium_discount_pct" not in df.columns:
+    latest = df.iloc[-1]
+    daily_vol  = latest.get("daily_volume")
+    avg30_vol  = latest.get("avg_30d_volume")
+    spread_pct = latest.get("bid_ask_spread_pct")
+    if pd.isna(daily_vol) and pd.isna(avg30_vol) and pd.isna(spread_pct):
         return
-    df_p = df[["date", "premium_discount_pct"]].copy()
-    df_p["7일 이동평균"] = df_p["premium_discount_pct"].rolling(7, min_periods=1).mean()
-    df_p = df_p[df_p["date"] >= cutoff].reset_index(drop=True)
-    df_p = df_p.rename(columns={"premium_discount_pct": "일별"})
 
-    st.subheader("프리미엄/디스카운트 추세")
-    base = alt.Chart(df_p).encode(x=alt.X("date:T", title="날짜"))
-    bar = base.mark_bar(opacity=0.4).encode(
-        y=alt.Y("일별:Q", title="프리미엄/디스카운트 (%)"),
-        color=alt.condition(alt.datum["일별"] >= 0, alt.value("#2ecc71"), alt.value("#e74c3c")),
+    st.subheader("유동성")
+    l1, l2, l3 = st.columns(3)
+    l1.metric("일일 거래량", f"{daily_vol:,.0f}주" if pd.notna(daily_vol) else "N/A")
+    l2.metric("30일 평균 거래량", f"{avg30_vol:,.0f}주" if pd.notna(avg30_vol) else "N/A")
+    l3.metric("매수매도 스프레드 (30일 중간값)", f"{spread_pct:.2f}%" if pd.notna(spread_pct) else "N/A")
+
+# ── 변동성 & 52주 고점 대비 낙폭 ───────────────────────────────
+def show_volatility_drawdown(df: pd.DataFrame, price_col: str):
+    """20일 연율화 실현 변동성과 52주 고점 대비 낙폭을 표시한다."""
+    if price_col not in df.columns or len(df) < 20:
+        return
+    prices = df[price_col]
+
+    daily_ret = prices.pct_change()
+    realized_vol = float(daily_ret.rolling(20, min_periods=10).std().iloc[-1] * np.sqrt(365) * 100)
+
+    rolling_high = prices.rolling(365, min_periods=1).max()
+    drawdown_series = (prices - rolling_high) / rolling_high * 100
+    drawdown = float(drawdown_series.iloc[-1])
+
+    st.subheader("변동성 & 낙폭")
+    v1, v2 = st.columns(2)
+    v1.metric("20일 연율화 변동성", f"{realized_vol:.1f}%" if pd.notna(realized_vol) else "N/A")
+    v2.metric("52주 고점 대비 낙폭", f"{drawdown:.1f}%" if pd.notna(drawdown) else "N/A")
+
+    dd_df = df[["date"]].copy()
+    dd_df["낙폭 (%)"] = drawdown_series
+    dd_chart = (
+        alt.Chart(dd_df)
+        .mark_area(opacity=0.4, color="#e74c3c")
+        .encode(
+            x=alt.X("date:T", title="날짜"),
+            y=alt.Y("낙폭 (%):Q"),
+            tooltip=["date:T", "낙폭 (%):Q"],
+        )
+        .properties(width="container")
     )
-    line = base.mark_line(color="#FFD700", strokeWidth=2).encode(
-        y=alt.Y("7일 이동평균:Q"),
-    )
-    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="gray", strokeDash=[4, 4]).encode(y="y:Q")
-    st.altair_chart((bar + line + zero).properties(width="container"))
+    st.altair_chart(dd_chart)
 
 # ── 가격-흐름 다이버전스 시그널 (P2-4) ────────────────────────
 def show_divergence_signal(df: pd.DataFrame, price_col: str, cutoff):
@@ -351,8 +362,9 @@ def ibit_live(df: pd.DataFrame) -> None:
     # 종합 시그널 점수
     show_signal_score(df, "implied_btc_px", "avg_buy_price_ex_fee", btc_px)
 
-    # P2-1: 모멘텀 지표
-    show_momentum_metrics(df)
+    # 유동성 / 변동성·낙폭
+    show_liquidity_metrics(df)
+    show_volatility_drawdown(df, "implied_btc_px")
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="ibit_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
@@ -372,9 +384,6 @@ def ibit_live(df: pd.DataFrame) -> None:
     df_flow = df[df["date"] >= cutoff].reset_index(drop=True)
     st.subheader("기관 자금 흐름 (BTC)")
     st.altair_chart(flow_chart(df_flow, "flow_btc_final"))
-
-    # P2-2: 프리미엄 추세
-    show_premium_trend(df, cutoff)
 
     # P2-4: 다이버전스 시그널
     show_divergence_signal(df, "implied_btc_px", cutoff)
@@ -430,8 +439,9 @@ def etha_live(df: pd.DataFrame) -> None:
     # 종합 시그널 점수
     show_signal_score(df, "implied_eth_px", "avg_buy_price_ex_fee", eth_px)
 
-    # P2-1: 모멘텀 지표
-    show_momentum_metrics(df)
+    # 유동성 / 변동성·낙폭
+    show_liquidity_metrics(df)
+    show_volatility_drawdown(df, "implied_eth_px")
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="etha_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
@@ -451,9 +461,6 @@ def etha_live(df: pd.DataFrame) -> None:
     df_flow = df[df["date"] >= cutoff].reset_index(drop=True)
     st.subheader("기관 자금 흐름 (ETH)")
     st.altair_chart(flow_chart(df_flow, "flow_eth_final"))
-
-    # P2-2: 프리미엄 추세
-    show_premium_trend(df, cutoff)
 
     # P2-4: 다이버전스 시그널
     show_divergence_signal(df, "implied_eth_px", cutoff)
@@ -509,7 +516,9 @@ def ethb_live(df: pd.DataFrame) -> None:
     # 종합 시그널 점수
     show_signal_score(df, "implied_eth_px", "avg_buy_price_ex_fee", eth_px)
 
-    show_momentum_metrics(df)
+    # 유동성 / 변동성·낙폭
+    show_liquidity_metrics(df)
+    show_volatility_drawdown(df, "implied_eth_px")
 
     period = st.radio("기간", list(PERIOD_DAYS.keys()), horizontal=True, key="ethb_period")
     cutoff = df["date"].max() - pd.Timedelta(days=PERIOD_DAYS[period])
@@ -529,7 +538,6 @@ def ethb_live(df: pd.DataFrame) -> None:
     st.subheader("기관 자금 흐름 (ETH)")
     st.altair_chart(flow_chart(df_flow, "flow_eth_final"))
 
-    show_premium_trend(df, cutoff)
     show_divergence_signal(df, "implied_eth_px", cutoff)
     show_confidence_explainer(df)
 
@@ -581,8 +589,9 @@ def bsol_live(df: pd.DataFrame) -> None:
     # 종합 시그널 점수
     show_signal_score(df, "implied_sol_px", "avg_buy_price_ex_staking", sol_px)
 
-    # P2-1: 모멘텀 지표
-    show_momentum_metrics(df)
+    # 유동성 / 변동성·낙폭
+    show_liquidity_metrics(df)
+    show_volatility_drawdown(df, "implied_sol_px")
 
     st.subheader("스테이킹 현황")
     staking_rate = float(latest.get("net_staking_reward_rate_pct") or 0)
@@ -614,9 +623,6 @@ def bsol_live(df: pd.DataFrame) -> None:
     df_flow = df[df["date"] >= cutoff].reset_index(drop=True)
     st.subheader("기관 자금 흐름 (SOL)")
     st.altair_chart(flow_chart(df_flow, "flow_sol_final"))
-
-    # P2-2: 프리미엄 추세
-    show_premium_trend(df, cutoff)
 
     # P2-4: 다이버전스 시그널
     show_divergence_signal(df, "implied_sol_px", cutoff)

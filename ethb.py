@@ -47,6 +47,9 @@ def build_snapshot():
     basket_eth = dp_float(points, "basketAmt")
     closing    = dp_float(points, "closingPrice")
     prem_disc  = dp_float(points, "premiumDiscountClosingPriceNavPercent")
+    daily_vol  = dp_float(points, "consolidatedVolume")
+    avg30_vol  = dp_float(points, "thirtyDayAverageVolume")
+    spread_pct = dp_float(points, "thirtyDayMedianBidAskSpread")
 
     eth_per_share = np.nan
     if not np.isnan(basket_eth) and not np.isnan(basket_usd) and not np.isnan(nav) and nav > 0:
@@ -66,6 +69,9 @@ def build_snapshot():
         "basket_eth":           basket_eth,
         "eth_per_share":        eth_per_share,
         "management_fee_pct":   MGMT_FEE_PCT,
+        "daily_volume":         daily_vol,
+        "avg_30d_volume":       avg30_vol,
+        "bid_ask_spread_pct":   spread_pct,
     }
 
     critical = ["nav_usd", "shares_outstanding", "eth_per_share"]
@@ -353,6 +359,7 @@ def _save_track(track_df):
         "avg_buy_price_ex_fee", "effective_cost_per_current_eth",
         "confidence_score_0_1",
         "observed_annual_fee_drag_pct", "estimated_annual_fee_pct", "fee_model_error_pct",
+        "daily_volume", "avg_30d_volume", "bid_ask_spread_pct",
         "obs_ts_utc",
     ]
     existing_cols = [c for c in out_cols if c in track_df.columns]
