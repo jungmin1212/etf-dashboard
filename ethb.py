@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from utils import (fetch_with_retry, fetch_ishares_datapoints, dp_float,
-                    backfill_gap_with_farside, HEADERS)
+                    backfill_gap_with_farside, coin_noise_floor, HEADERS)
 
 URL          = "https://www.ishares.com/us/products/348532/ishares-staked-ethereum-trust-etf"
 XLS_URL      = ("https://www.ishares.com/us/products/348532/fund/"
@@ -240,8 +240,9 @@ def build_cost_basis_track(df, seed_avg_cost=None):
     )
     df["flow_eth_from_holdings"] = df["eth_delta"] + df["est_fee_drain_eth"]
 
+    noise_floor = coin_noise_floor(df, "eth_in_trust", "basket_eth")
     flow_agreement = 1.0 - (abs(df["flow_eth_from_shares"] - df["flow_eth_from_holdings"]) /
-                            (abs(df["flow_eth_from_shares"]) + abs(df["flow_eth_from_holdings"]) + 1e-12))
+                            (abs(df["flow_eth_from_shares"]) + abs(df["flow_eth_from_holdings"]) + noise_floor))
     df["flow_method_agreement"] = np.clip(flow_agreement, 0.0, 1.0)
 
     premium_abs = df["premium_discount_pct"].abs()
@@ -277,7 +278,7 @@ def build_cost_basis_track(df, seed_avg_cost=None):
 
         total = float(row["eth_in_trust"]) if not np.isnan(row["eth_in_trust"]) else inv
         resid = abs(row["eth_delta"] - (row["flow_eth_final"] - row["est_fee_drain_eth"]))
-        denom = max(abs(row["eth_delta"]), 1e-12)
+        denom = max(abs(row["eth_delta"]), noise_floor.iloc[i])
         conf  = 0.0 if i == 0 else max(0.0, min(1.0,
                     1.0 - resid / denom - abs(row["premium_discount_pct"]) / 20.0
                     - (1.0 - row["flow_method_agreement"]) * 0.3))

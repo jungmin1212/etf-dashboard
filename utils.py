@@ -148,6 +148,26 @@ def dp_float(points, key):
     return to_float(entry.get("formattedValue"))
 
 
+# ── 신뢰도 계산용 노이즈 하한 ─────────────────────────────────────────────────
+# iShares basketAmt는 소수 둘째 자리까지만 공시된다(최대 ±0.005). 코인/주 비율이 이만큼
+# 양자화되므로 보유량(주식수 × 코인/주) 추정치에는 항상 그 크기의 오차가 섞여 있다.
+# 순유입이 0인 날은 |보유량 변화|도 0이 되어, 이걸 분모로 쓰는 상대오차가 1e-12로
+# 폭주해 신뢰도가 무조건 0이 되었다. 분모가 이 하한 아래로 내려가지 않게 막는 용도.
+BASKET_ROUNDING = 0.005
+
+
+def coin_noise_floor(df, holdings_col, basket_col, default_rel=1e-4):
+    """공시 반올림이 보유량 추정에 만드는 최대 오차(코인 단위). 행마다 계산하며 항상 > 0."""
+    if basket_col in df.columns:
+        basket = pd.to_numeric(df[basket_col], errors="coerce")
+        rel = (BASKET_ROUNDING / basket.where(basket > 0)).ffill().bfill()
+    else:
+        rel = pd.Series(np.nan, index=df.index)
+    rel = rel.fillna(default_rel)
+    holdings = pd.to_numeric(df[holdings_col], errors="coerce")
+    return (holdings * rel).fillna(0.0) + 1e-12
+
+
 # ── Farside Investors 일별 순유입 데이터 (수집 공백 메우기용) ──────────────────
 FARSIDE_URLS = {
     "bitcoin":   "https://farside.co.uk/bitcoin-etf-flow-all-data/",
