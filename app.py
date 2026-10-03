@@ -38,6 +38,8 @@ def load_data(file_name: str) -> pd.DataFrame:
     if fp.exists():
         df = pd.read_csv(fp)
         df["date"] = pd.to_datetime(df["date"])
+        if "flow_date" in df.columns:
+            df["flow_date"] = pd.to_datetime(df["flow_date"])
         return df
     return pd.DataFrame()
 
@@ -67,6 +69,18 @@ def get_crypto_prices() -> dict:
         pass
     return prices
 
+# ── flow 날짜 정렬 ─────────────────────────────────────────────
+# iShares 주식 수는 '전일 기준'으로 공시되므로 CSV 행 date의 flow는 실제로는 직전 거래일에 발생한 것이다.
+# 트래커가 기록한 flow_date(실제 발생일)가 있으면 그 기준으로 정렬하고, 없으면(구버전 CSV·BSOL) 기존 동작.
+def flows_by_trade_date(df: pd.DataFrame, flow_col: str) -> pd.Series:
+    key = df["flow_date"] if "flow_date" in df.columns else df["date"]
+    return df.groupby(key)[flow_col].sum()
+
+def headline_flow_date(df: pd.DataFrame):
+    if "flow_date" in df.columns:
+        return df.iloc[-1]["flow_date"]
+    return df.iloc[-2]["date"] if len(df) >= 2 else df.iloc[-1]["date"]
+
 # ── 데이터 기준일 표시 헬퍼 ───────────────────────────────────
 def show_data_timestamp(df: pd.DataFrame):
     if df.empty:
@@ -86,6 +100,8 @@ def show_data_timestamp(df: pd.DataFrame):
 
 # ── Altair 자금 흐름 차트 ──────────────────────────────────────
 def flow_chart(df: pd.DataFrame, col: str, color_pos="#2ecc71", color_neg="#e74c3c"):
+    if "flow_date" in df.columns:
+        df = df.groupby("flow_date", as_index=False)[col].sum().rename(columns={"flow_date": "date"})
     chart = (
         alt.Chart(df)
         .mark_bar()
@@ -161,7 +177,10 @@ def show_divergence_signal(df: pd.DataFrame, price_col: str, cutoff):
     if "flow_usd_final" not in df.columns or price_col not in df.columns or len(df) < 30:
         return
 
-    df_d = df[["date", price_col, "flow_usd_final"]].copy()
+    df_d = df[["date", price_col]].copy()
+    df_d["flow_usd_final"] = df_d["date"].map(flows_by_trade_date(df, "flow_usd_final"))
+    last_ok = df_d["flow_usd_final"].last_valid_index()   # 최신 거래일의 flow는 다음 공시 때까지 없음
+    df_d = df_d.loc[:last_ok].fillna({"flow_usd_final": 0.0}).reset_index(drop=True)
     pct = df_d[price_col].pct_change()
     pct_mean = pct.rolling(30, min_periods=7).mean()
     pct_std = pct.rolling(30, min_periods=7).std().replace(0, np.nan)
@@ -177,6 +196,9 @@ def show_divergence_signal(df: pd.DataFrame, price_col: str, cutoff):
     latest_div = float(df_d["divergence"].iloc[-1]) if pd.notna(df_d["divergence"].iloc[-1]) else 0.0
 
     st.subheader("가격-흐름 다이버전스")
+    if "flow_date" in df.columns:
+        st.caption(f"기준일 {df_d['date'].iloc[-1].strftime('%Y-%m-%d')} — 주식 수가 전일 기준 공시라 "
+                   "최신 거래일의 자금 흐름은 아직 반영되지 않았습니다.")
     if latest_div > 0.5:
         st.success(f"강세 다이버전스: {latest_div:+.2f} (기관이 가격 대비 적극 매수 중)")
     elif latest_div < -0.5:
@@ -269,11 +291,12 @@ def show_signal_score(df: pd.DataFrame, price_col: str, cost_col: str, market_px
     # 3) 다이버전스: 가격 변화 대비 자금흐름의 초과 강도
     pct = df[price_col].pct_change()
     price_z_s = (pct - pct.rolling(30, min_periods=7).mean()) / pct.rolling(30, min_periods=7).std().replace(0, np.nan)
-    flow_mean = df["flow_usd_final"].rolling(30, min_periods=7).mean()
-    flow_std = df["flow_usd_final"].rolling(30, min_periods=7).std().replace(0, np.nan)
-    flow_z_s = (df["flow_usd_final"] - flow_mean) / flow_std
-    divergence = (flow_z_s - price_z_s).iloc[-1]
-    divergence = float(divergence) if pd.notna(divergence) else 0.0
+    flow_al = df["date"].map(flows_by_trade_date(df, "flow_usd_final"))   # 가격과 같은 거래일로 정렬 (최신일은 NaN)
+    flow_mean = flow_al.rolling(30, min_periods=7).mean()
+    flow_std = flow_al.rolling(30, min_periods=7).std().replace(0, np.nan)
+    flow_z_s = (flow_al - flow_mean) / flow_std
+    div_s = (flow_z_s - price_z_s).dropna()
+    divergence = float(div_s.iloc[-1]) if len(div_s) else 0.0
     score_div = float(np.clip(divergence, -3, 3)) / 3 * 25
 
     # 4) 프리미엄/디스카운트: 할인 상태면 +, 프리미엄(과열)이면 -
@@ -338,7 +361,7 @@ def ibit_live(df: pd.DataFrame) -> None:
     btc_held  = float(latest.get("btc_in_trust", 0) or 0)
     prev_held = float(prev.get("btc_in_trust", 0) or 0)
     flow_val  = float(latest["flow_btc_final"])
-    flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
+    flow_date = headline_flow_date(df)
     date_str  = flow_date.strftime("%m월 %d일")
 
     if btc_px and avg_cost > 0:
@@ -415,7 +438,7 @@ def etha_live(df: pd.DataFrame) -> None:
     eth_held  = float(latest.get("eth_in_trust", 0) or 0)
     prev_held = float(prev.get("eth_in_trust", 0) or 0)
     flow_val  = float(latest["flow_eth_final"])
-    flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
+    flow_date = headline_flow_date(df)
     date_str  = flow_date.strftime("%m월 %d일")
 
     if eth_px and avg_cost > 0:
@@ -492,7 +515,7 @@ def ethb_live(df: pd.DataFrame) -> None:
     eth_held  = float(latest.get("eth_in_trust", 0) or 0)
     prev_held = float(prev.get("eth_in_trust", 0) or 0)
     flow_val  = float(latest["flow_eth_final"])
-    flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
+    flow_date = headline_flow_date(df)
     date_str  = flow_date.strftime("%m월 %d일")
 
     if eth_px and avg_cost > 0:
@@ -565,7 +588,7 @@ def bsol_live(df: pd.DataFrame) -> None:
     sol_held  = float(latest.get("sol_in_trust", 0) or 0)
     prev_held = float(prev.get("sol_in_trust", 0) or 0)
     flow_val  = float(latest["flow_sol_final"])
-    flow_date = df.iloc[-2]["date"] if has_prev else latest["date"]
+    flow_date = headline_flow_date(df)
     date_str  = flow_date.strftime("%m월 %d일")
 
     if sol_px and avg_cost > 0:

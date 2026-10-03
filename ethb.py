@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from utils import (fetch_with_retry, fetch_ishares_datapoints, dp_float,
-                    backfill_gap_with_farside, coin_noise_floor, HEADERS)
+                    backfill_gap_with_farside, coin_noise_floor, add_flow_date, HEADERS)
 
 URL          = "https://www.ishares.com/us/products/348532/ishares-staked-ethereum-trust-etf"
 XLS_URL      = ("https://www.ishares.com/us/products/348532/fund/"
@@ -300,6 +300,7 @@ def build_cost_basis_track(df, seed_avg_cost=None):
     df["estimated_annual_fee_pct"]       = df["management_fee_pct"]
     df["fee_model_error_pct"]            = (df["observed_annual_fee_drag_pct"]
                                             - df["estimated_annual_fee_pct"])
+    df = add_flow_date(df)
     return df
 
 
@@ -351,7 +352,7 @@ def main():
 
 def _save_track(track_df):
     out_cols = [
-        "date", "eth_in_trust", "net_assets_usd", "implied_eth_px",
+        "date", "flow_date", "eth_in_trust", "net_assets_usd", "implied_eth_px",
         "nav_usd", "closing_price_usd", "premium_discount_pct",
         "shares_outstanding", "share_delta", "eth_delta",
         "management_fee_pct", "est_fee_drain_eth", "w_shares", "flow_method_agreement", "flow_eth_final",

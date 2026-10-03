@@ -168,6 +168,24 @@ def coin_noise_floor(df, holdings_col, basket_col, default_rel=1e-4):
     return (holdings * rel).fillna(0.0) + 1e-12
 
 
+# ── flow 실제 발생일 ──────────────────────────────────────────────────────────
+def add_flow_date(df):
+    """각 행의 flow가 실제로 발생한 거래일(flow_date) 컬럼을 추가한다.
+
+    iShares 주식 수는 '전일 기준(prior day)'으로 공시되므로, 실시간/XLS 백필 행의 date에 찍힌
+    flow는 실제로는 직전 거래일(= 이전 행의 date)에 일어난 것이다. 반면 Farside 복원 행
+    (obs_ts_utc == 'farside_backfill')은 처음부터 실제 거래일 기준이라 자기 date가 맞다.
+    둘 다 Farside 일별 실측과 대조해 확인했다(전자 상관 +1.00@lag1, 후자 +1.00@lag0).
+    """
+    prev_date = df["date"].shift(1)
+    if "obs_ts_utc" in df.columns:
+        is_farside = df["obs_ts_utc"].astype(str).eq("farside_backfill")
+    else:
+        is_farside = pd.Series(False, index=df.index)
+    df["flow_date"] = df["date"].where(is_farside, prev_date).fillna(df["date"])
+    return df
+
+
 # ── Farside Investors 일별 순유입 데이터 (수집 공백 메우기용) ──────────────────
 FARSIDE_URLS = {
     "bitcoin":   "https://farside.co.uk/bitcoin-etf-flow-all-data/",
