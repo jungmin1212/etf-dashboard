@@ -20,7 +20,9 @@ TRACK_CSV    = DATA_DIR / "ibit_cost_basis_track.csv"
 INCEPTION    = pd.Timestamp("2024-01-11")   # IBIT 상장일
 MGMT_FEE_PCT = 0.25                          # 연 운용보수 (고정)
 
-SEED_AVG_COST = None   # 수동으로 알고 있으면 USD per BTC 입력
+# 추적 시작(2024-04-01) 직전 공식 평단. SEC 10-Q(2024-03-31) Schedule of Investments:
+# 252,011 BTC, 취득원가 $13,984,500,952 → $55,492/BTC. None이면 첫날 시장가로 시드되어 평단이 과대 계산된다.
+SEED_AVG_COST = 13_984_500_952 / 252_011
 
 
 # ── 상품 페이지 임베드 JSON에서 스냅샷 조립 (Primary 소스) ─────────────────────
