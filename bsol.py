@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from utils import to_float, find_first, fetch_page_text, HEADERS
+from utils import to_float, find_first, fetch_page_text, split_adjusted_share_delta, HEADERS
 
 URL = "https://bsoletf.com"
 DATA_DIR = Path("bsol_tracker")
@@ -215,7 +215,7 @@ def build_cost_basis_track(df, seed_avg_cost=None):
         )
     )
 
-    df["share_delta"] = df["shares_outstanding"].diff().fillna(0.0)
+    df["share_delta"], df["_split_factor"] = split_adjusted_share_delta(df, "sol_per_share")
     df["sol_delta"] = df["sol_in_trust"].diff().fillna(0.0)
 
     df["sponsor_fee_pct"] = df["sponsor_fee_pct"].ffill().fillna(0.0)
@@ -305,7 +305,7 @@ def build_cost_basis_track(df, seed_avg_cost=None):
     df["cumulative_est_staking_sol"] = cumulative_est_staking_sol
     df["confidence_score_0_1"] = confidence_score
 
-    df["observed_annual_yield_pct"] = df["sol_per_share"].pct_change() * (365.0 / day_gaps) * 100
+    df["observed_annual_yield_pct"] = ((df["sol_per_share"].pct_change() + 1.0) / df["_split_factor"] - 1.0) * (365.0 / day_gaps) * 100
     df["estimated_annual_yield_pct"] = df["net_staking_reward_rate_pct"] - df["sponsor_fee_pct"]
     df["yield_model_error_pct"] = df["observed_annual_yield_pct"] - df["estimated_annual_yield_pct"]
 

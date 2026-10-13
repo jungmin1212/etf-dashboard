@@ -168,6 +168,34 @@ def coin_noise_floor(df, holdings_col, basket_col, default_rel=1e-4):
     return (holdings * rel).fillna(0.0) + 1e-12
 
 
+# ── 주식 병합/분할 보정 ───────────────────────────────────────────────────────
+def split_adjusted_share_delta(df, per_share_col, ratio_tol=0.03, holdings_tol=0.10):
+    """주식 병합/분할을 보정한 일별 발행 주식 수 변화와, 그날의 병합/분할 비율을 돌려준다.
+
+    병합/분할이 일어난 날은 발행 주식 수가 그 비율만큼 급변하지만 펀드가 가진 코인은 그대로다.
+    shares.diff()를 그대로 쓰면 이게 가짜 대량 환매/창설로 읽혀 flow·재고·평단이 망가진다
+    (ETHA 2026-10-06 3:1 병합: flow -687만 ETH, 재고 0, 평단 NaN).
+
+    병합/분할 판정: 주당 코인 비율이 정수배(>=2)로 바뀌고(오차 ratio_tol 이내), 보유량
+    (주식 수 x 주당 코인)이 전일과 연속(holdings_tol 이내)일 때. 판정되면 전일 주식 수를 같은
+    비율로 환산한 뒤 차이를 구한다. 반환: (share_delta, split_factor). 평소 split_factor는 1.0.
+    """
+    shares = pd.to_numeric(df["shares_outstanding"], errors="coerce")
+    per = pd.to_numeric(df[per_share_col], errors="coerce")
+    g = per / per.shift(1)                         # 병합이면 >1, 분할이면 <1
+    big = g.where(g >= 1, 1.0 / g)                 # 항상 >=1 로 정규화
+    n = big.round()
+    near_int = (big - n).abs() / n < ratio_tol
+    hold_ratio = (shares * per) / (shares.shift(1) * per.shift(1))
+    is_split = (n >= 2) & near_int & ((hold_ratio - 1.0).abs() < holdings_tol)
+    factor = g.where(is_split, 1.0).fillna(1.0)
+    delta = (shares - shares.shift(1) / factor).fillna(0.0)
+    for i in df.index[is_split.fillna(False)]:
+        print(f"[주식 병합/분할 감지] {df.loc[i, 'date']}: 주당 코인 x{g[i]:.3f}, "
+              f"주식 수 {shares[i-1]:,.0f} -> {shares[i]:,.0f} - share_delta 보정")
+    return delta, factor
+
+
 # ── flow 실제 발생일 ──────────────────────────────────────────────────────────
 def add_flow_date(df):
     """각 행의 flow가 실제로 발생한 거래일(flow_date) 컬럼을 추가한다.

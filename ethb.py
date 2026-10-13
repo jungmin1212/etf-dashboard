@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from utils import (fetch_with_retry, fetch_ishares_datapoints, dp_float,
-                    backfill_gap_with_farside, coin_noise_floor, add_flow_date, HEADERS)
+                    backfill_gap_with_farside, coin_noise_floor, add_flow_date, split_adjusted_share_delta, HEADERS)
 
 URL          = "https://www.ishares.com/us/products/348532/ishares-staked-ethereum-trust-etf"
 XLS_URL      = ("https://www.ishares.com/us/products/348532/fund/"
@@ -223,7 +223,7 @@ def build_cost_basis_track(df, seed_avg_cost=None):
         np.nan
     )
 
-    df["share_delta"] = df["shares_outstanding"].diff().fillna(0.0)
+    df["share_delta"], df["_split_factor"] = split_adjusted_share_delta(df, "eth_per_share")
     df["eth_delta"]   = df["eth_in_trust"].diff().fillna(0.0)
 
     df["management_fee_pct"]   = df["management_fee_pct"].ffill().fillna(MGMT_FEE_PCT)
@@ -296,7 +296,7 @@ def build_cost_basis_track(df, seed_avg_cost=None):
     df["effective_cost_per_current_eth"] = eff_cost_list
     df["eth_inventory"]                  = inv_list
     df["confidence_score_0_1"]           = conf_list
-    df["observed_annual_fee_drag_pct"]   = -df["eth_per_share"].pct_change() * (365.0 / day_gaps) * 100
+    df["observed_annual_fee_drag_pct"]   = -((df["eth_per_share"].pct_change() + 1.0) / df["_split_factor"] - 1.0) * (365.0 / day_gaps) * 100
     df["estimated_annual_fee_pct"]       = df["management_fee_pct"]
     df["fee_model_error_pct"]            = (df["observed_annual_fee_drag_pct"]
                                             - df["estimated_annual_fee_pct"])
